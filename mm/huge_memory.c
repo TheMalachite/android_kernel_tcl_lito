@@ -2339,7 +2339,6 @@ out:
 	mmu_notifier_invalidate_range_only_end(mm, haddr, haddr +
 					       HPAGE_PMD_SIZE);
 }
-
 void split_huge_pmd_address(struct vm_area_struct *vma, unsigned long address,
 		bool freeze, struct page *page)
 {

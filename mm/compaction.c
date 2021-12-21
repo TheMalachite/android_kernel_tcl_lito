@@ -1282,6 +1282,9 @@ fast_isolate_freepages(struct compact_control *cc)
 	struct page *page = NULL;
 	bool scan_start = false;
 	int order;
+#ifdef CONFIG_TCT_MEMORY_DEFRAG
+	int i;
+#endif
 
 	/* Full compaction passes in a negative order */
 	if (cc->order <= 0)
@@ -1313,10 +1316,19 @@ fast_isolate_freepages(struct compact_control *cc)
 	 */
 	cc->search_order = min_t(unsigned int, cc->order - 1, cc->search_order);
 
+#ifdef CONFIG_TCT_MEMORY_DEFRAG
+	for(i = 0; i < NR_AREA; i++)
+		for(order = cc->search_order;
+		    !page && order >= 0;
+		    order = next_search_order(cc, order)) {
+		int id = free_area_id(i, cc->order);
+		struct free_area *area = &cc->zone->free_area[id][order];
+#else
 	for (order = cc->search_order;
 	     !page && order >= 0;
 	     order = next_search_order(cc, order)) {
 		struct free_area *area = &cc->zone->free_area[order];
+#endif
 		struct list_head *freelist;
 		struct page *freepage;
 		unsigned long flags;
@@ -1325,6 +1337,7 @@ fast_isolate_freepages(struct compact_control *cc)
 		if (!area->nr_free)
 			continue;
 
+		high_pfn = 0;
 		spin_lock_irqsave(&cc->zone->lock, flags);
 		freelist = &area->free_list[MIGRATE_MOVABLE];
 		list_for_each_entry_reverse(freepage, freelist, lru) {
@@ -1629,6 +1642,9 @@ static unsigned long fast_find_migrateblock(struct compact_control *cc)
 	unsigned long pfn = cc->migrate_pfn;
 	unsigned long high_pfn;
 	int order;
+#ifdef CONFIG_TCT_MEMORY_DEFRAG
+	int i;
+#endif
 
 	/* Skip hints are relied on to avoid repeats on the fast search */
 	if (cc->ignore_skip_hint)
@@ -1670,10 +1686,18 @@ static unsigned long fast_find_migrateblock(struct compact_control *cc)
 		distance >>= 2;
 	high_pfn = pageblock_start_pfn(cc->migrate_pfn + distance);
 
+#ifdef CONFIG_TCT_MEMORY_DEFRAG
+	for (i = NR_AREA - 1; i >=0 ; i--)
+		for (order = cc->order - 1;
+		     order >= PAGE_ALLOC_COSTLY_ORDER && pfn == cc->migrate_pfn && nr_scanned < limit;
+		     order--) {
+		struct free_area *area = &cc->zone->free_area[i][order];
+#else
 	for (order = cc->order - 1;
 	     order >= PAGE_ALLOC_COSTLY_ORDER && pfn == cc->migrate_pfn && nr_scanned < limit;
 	     order--) {
 		struct free_area *area = &cc->zone->free_area[order];
+#endif
 		struct list_head *freelist;
 		unsigned long flags;
 		struct page *freepage;
@@ -1852,6 +1876,9 @@ static enum compact_result __compact_finished(struct compact_control *cc)
 	unsigned int order;
 	const int migratetype = cc->migratetype;
 	int ret;
+#ifdef CONFIG_TCT_MEMORY_DEFRAG
+	int i;
+#endif
 
 	/* Compaction run completes if the migrate and free scanner meet */
 	if (compact_scanners_met(cc)) {
@@ -1887,8 +1914,14 @@ static enum compact_result __compact_finished(struct compact_control *cc)
 
 	/* Direct compactor: Is a suitable page free? */
 	ret = COMPACT_NO_SUITABLE_PAGE;
+#ifdef CONFIG_TCT_MEMORY_DEFRAG
+	foreach_area_order(i, order, cc->order) {
+		int id = free_area_id(i, cc->order);
+		struct free_area *area = &cc->zone->free_area[id][order];
+#else
 	for (order = cc->order; order < MAX_ORDER; order++) {
 		struct free_area *area = &cc->zone->free_area[order];
+#endif
 		bool can_steal;
 
 		/* Job done if page is free of the right migratetype */

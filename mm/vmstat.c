@@ -1021,16 +1021,27 @@ static void fill_contig_page_info(struct zone *zone,
 				struct contig_page_info *info)
 {
 	unsigned int order;
+#ifdef CONFIG_TCT_MEMORY_DEFRAG
+	int i;
+#endif
 
 	info->free_pages = 0;
 	info->free_blocks_total = 0;
 	info->free_blocks_suitable = 0;
 
+#ifdef CONFIG_TCT_MEMORY_DEFRAG
+	foreach_area_order(i, order, 0) {
+#else
 	for (order = 0; order < MAX_ORDER; order++) {
+#endif
 		unsigned long blocks;
 
 		/* Count number of free blocks */
+#ifdef CONFIG_TCT_MEMORY_DEFRAG
+		blocks = zone->free_area[i][order].nr_free;
+#else
 		blocks = zone->free_area[order].nr_free;
+#endif
 		info->free_blocks_total += blocks;
 
 		/* Count free base pages */
@@ -1360,11 +1371,24 @@ static void walk_zones_in_node(struct seq_file *m, pg_data_t *pgdat,
 static void frag_show_print(struct seq_file *m, pg_data_t *pgdat,
 						struct zone *zone)
 {
+#ifdef CONFIG_TCT_MEMORY_DEFRAG
+	int order, i;
+	unsigned long nr_free;
+	for (order = 0; order < MAX_ORDER; ++order) {
+		nr_free = 0;
+		for (i = 0; i < NR_AREA; ++i) {
+			nr_free  += zone->free_area[i][order].nr_free;
+		}
+
+		seq_printf(m, "%6lu ", nr_free);
+	}
+#else
 	int order;
 
 	seq_printf(m, "Node %d, zone %8s ", pgdat->node_id, zone->name);
 	for (order = 0; order < MAX_ORDER; ++order)
 		seq_printf(m, "%6lu ", zone->free_area[order].nr_free);
+#endif
 	seq_putc(m, '\n');
 }
 
@@ -1392,11 +1416,20 @@ static void pagetypeinfo_showfree_print(struct seq_file *m,
 			unsigned long freecount = 0;
 			struct free_area *area;
 			struct list_head *curr;
+#ifdef CONFIG_TCT_MEMORY_DEFRAG
+			int i;
+			for (i = 0; i < NR_AREA; ++i) {
+				area = &(zone->free_area[i][order]);
 
+				list_for_each(curr, &area->free_list[mtype])
+					freecount++;
+			}
+#else
 			area = &(zone->free_area[order]);
 
 			list_for_each(curr, &area->free_list[mtype])
 				freecount++;
+#endif
 			seq_printf(m, "%6lu ", freecount);
 		}
 		seq_putc(m, '\n');

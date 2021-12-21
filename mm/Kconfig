@@ -876,6 +876,15 @@ config PROCESS_RECLAIM
 
 	 Any other value is ignored.
 
+config TCT_MEMORY_DEFRAG
+	bool "Enable memory defrag feature"
+	default y
+
+config FORCE_ZONEAREA_SHIFT
+	int "order of memory areas per-zone"
+	depends on TCT_MEMORY_DEFRAG
+	default 1 if ARM
+	default 2
 config FORCE_ALLOC_FROM_DMA_ZONE
 	bool "Force certain memory allocators to always return ZONE_DMA32 memory"
 	depends on ZONE_DMA32
@@ -885,3 +894,9 @@ config FORCE_ALLOC_FROM_DMA_ZONE
 	  always using ZONE_DMA32 memory.
 
 	  If unsure, say "n".
+config TCT_MM_MONITOR
+	bool "enable memory monitor"
+	default n
+config TCT_ION_MONITOR
+	bool "enable ion monitor"
+	default n

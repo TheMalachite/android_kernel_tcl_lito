@@ -39,6 +39,9 @@
 #include <linux/delayacct.h>
 #include <linux/psi.h>
 #include "internal.h"
+#ifdef CONFIG_TCT_MM_MONITOR
+#include "mm_monitor.h"
+#endif
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/filemap.h>
@@ -49,8 +52,10 @@
 #include <linux/buffer_head.h> /* for try_to_free_buffers */
 
 #include <asm/mman.h>
-
 int want_old_faultaround_pte = 1;
+#ifdef CONFIG_TCT_IOLIMIT
+#include <linux/iolimit_cgroup.h>
+#endif
 
 /*
  * Shared mappings implemented 30.11.1994. It's not fully working yet,
@@ -2192,6 +2197,9 @@ static ssize_t generic_file_buffered_read(struct kiocb *iocb,
 		unsigned long nr, ret;
 
 		cond_resched();
+#ifdef CONFIG_TCT_IOLIMIT
+		io_read_bandwidth_control(PAGE_SIZE);
+#endif
 find_page:
 		if (fatal_signal_pending(current)) {
 			error = -EINTR;
@@ -2200,6 +2208,9 @@ find_page:
 
 		page = find_get_page(mapping, index);
 		if (!page) {
+#ifdef CONFIG_TCT_MM_MONITOR
+			inc_mm_monitor_event(MM_PAGECACHE_READ_MIS_COUNT);
+#endif
 			if (iocb->ki_flags & IOCB_NOWAIT)
 				goto would_block;
 			page_cache_sync_readahead(mapping,
@@ -2209,6 +2220,10 @@ find_page:
 			if (unlikely(page == NULL))
 				goto no_cached_page;
 		}
+#ifdef CONFIG_TCT_MM_MONITOR
+		else
+			inc_mm_monitor_event(MM_PAGECACHE_READ_HIT_COUNT);
+#endif
 		if (PageReadahead(page)) {
 			page_cache_async_readahead(mapping,
 					ra, filp, page,
@@ -2567,6 +2582,9 @@ static struct file *do_sync_mmap_readahead(struct vm_fault *vmf)
 		return fpin;
 
 	if (vmf->vma_flags & VM_SEQ_READ) {
+#ifdef CONFIG_TCT_MM_MONITOR
+		add_mm_monitor_event(MM_READAHEAD_MMAP_SYNC,ra->ra_pages);
+#endif
 		fpin = maybe_unlock_mmap_for_io(vmf, fpin);
 		page_cache_sync_readahead(mapping, ra, file, offset,
 					  ra->ra_pages);
@@ -2615,6 +2633,9 @@ static struct file *do_async_mmap_readahead(struct vm_fault *vmf,
 	if (ra->mmap_miss > 0)
 		ra->mmap_miss--;
 	if (PageReadahead(page)) {
+#ifdef CONFIG_TCT_MM_MONITOR
+		add_mm_monitor_event(MM_READAHEAD_MMAP_ASYNC,ra->ra_pages);
+#endif
 		fpin = maybe_unlock_mmap_for_io(vmf, fpin);
 		page_cache_async_readahead(mapping, ra, file,
 					   page, offset, ra->ra_pages);
@@ -2671,8 +2692,14 @@ vm_fault_t filemap_fault(struct vm_fault *vmf)
 		 * We found the page, so try async readahead before
 		 * waiting for the lock.
 		 */
+#ifdef CONFIG_TCT_MM_MONITOR
+		inc_mm_monitor_event(MM_PAGECACHE_MMAP_HIT_COUNT);
+#endif
 		fpin = do_async_mmap_readahead(vmf, page);
 	} else if (!page) {
+#ifdef CONFIG_TCT_MM_MONITOR
+		inc_mm_monitor_event(MM_PAGECACHE_MMAP_MIS_COUNT);
+#endif
 		/* No page in the page cache at all */
 		count_vm_event(PGMAJFAULT);
 		count_memcg_event_mm(vmf->vma->vm_mm, PGMAJFAULT);
@@ -3293,6 +3320,9 @@ ssize_t generic_perform_write(struct file *file,
 		size_t copied;		/* Bytes copied from user */
 		void *fsdata;
 
+#ifdef CONFIG_TCT_IOLIMIT
+		io_write_bandwidth_control(PAGE_SIZE);
+#endif
 		offset = (pos & (PAGE_SIZE - 1));
 		bytes = min_t(unsigned long, PAGE_SIZE - offset,
 						iov_iter_count(i));

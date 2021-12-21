@@ -164,6 +164,7 @@ enum zs_stat_type {
 	CLASS_FULL,
 	OBJ_ALLOCATED,
 	OBJ_USED,
+	OBJ_MIGRATED,
 	NR_ZS_STAT_TYPE,
 };
 
@@ -598,15 +599,15 @@ static int zs_stats_size_show(struct seq_file *s, void *v)
 	struct size_class *class;
 	int objs_per_zspage;
 	unsigned long class_almost_full, class_almost_empty;
-	unsigned long obj_allocated, obj_used, pages_used, freeable;
+	unsigned long obj_allocated, obj_used, pages_used, freeable, obj_migrated;
 	unsigned long total_class_almost_full = 0, total_class_almost_empty = 0;
 	unsigned long total_objs = 0, total_used_objs = 0, total_pages = 0;
-	unsigned long total_freeable = 0;
+	unsigned long total_freeable = 0, total_migrated = 0;
 
-	seq_printf(s, " %5s %5s %11s %12s %13s %10s %10s %16s %8s\n",
+	seq_printf(s, " %5s %5s %11s %12s %13s %10s %10s %16s %8s %12s\n",
 			"class", "size", "almost_full", "almost_empty",
 			"obj_allocated", "obj_used", "pages_used",
-			"pages_per_zspage", "freeable");
+			"pages_per_zspage", "freeable", "obj_migrated");
 
 	for (i = 0; i < ZS_SIZE_CLASSES; i++) {
 		class = pool->size_class[i];
@@ -619,6 +620,7 @@ static int zs_stats_size_show(struct seq_file *s, void *v)
 		class_almost_empty = zs_stat_get(class, CLASS_ALMOST_EMPTY);
 		obj_allocated = zs_stat_get(class, OBJ_ALLOCATED);
 		obj_used = zs_stat_get(class, OBJ_USED);
+		obj_migrated = zs_stat_get(class, OBJ_MIGRATED);
 		freeable = zs_can_compact(class);
 		spin_unlock(&class->lock);
 
@@ -627,10 +629,10 @@ static int zs_stats_size_show(struct seq_file *s, void *v)
 				class->pages_per_zspage;
 
 		seq_printf(s, " %5u %5u %11lu %12lu %13lu"
-				" %10lu %10lu %16d %8lu\n",
+				" %10lu %10lu %16d %8lu %12lu\n",
 			i, class->size, class_almost_full, class_almost_empty,
 			obj_allocated, obj_used, pages_used,
-			class->pages_per_zspage, freeable);
+			class->pages_per_zspage, freeable, obj_migrated);
 
 		total_class_almost_full += class_almost_full;
 		total_class_almost_empty += class_almost_empty;
@@ -638,13 +640,15 @@ static int zs_stats_size_show(struct seq_file *s, void *v)
 		total_used_objs += obj_used;
 		total_pages += pages_used;
 		total_freeable += freeable;
+		total_migrated += obj_migrated;
 	}
 
 	seq_puts(s, "\n");
-	seq_printf(s, " %5s %5s %11lu %12lu %13lu %10lu %10lu %16s %8lu\n",
+	seq_printf(s, " %5s %5s %11lu %12lu %13lu %10lu %10lu %16s %8lu %12lu\n",
 			"Total", "", total_class_almost_full,
 			total_class_almost_empty, total_objs,
-			total_used_objs, total_pages, "", total_freeable);
+			total_used_objs, total_pages, "", total_freeable,
+			total_migrated);
 
 	return 0;
 }
@@ -1751,6 +1755,7 @@ static int migrate_zspage(struct zs_pool *pool, struct size_class *class,
 		record_obj(handle, free_obj);
 		unpin_tag(handle);
 		obj_free(class, used_obj);
+		zs_stat_inc(class, OBJ_MIGRATED, 1);
 	}
 
 	/* Remember last position in this iteration */
@@ -1758,6 +1763,17 @@ static int migrate_zspage(struct zs_pool *pool, struct size_class *class,
 	cc->obj_idx = obj_idx;
 
 	return ret;
+}
+
+static inline struct zspage *class_get_zspage(struct size_class *class,
+					      enum fullness_group fg,
+					      bool at_head)
+{
+	struct list_head *head = &class->fullness_list[fg];
+	if (list_empty(head))
+		return NULL;
+	return at_head ? list_first_entry(head, struct zspage, list) :
+		list_last_entry(head, struct zspage, list);
 }
 
 static struct zspage *isolate_zspage(struct size_class *class, bool source)
@@ -1772,8 +1788,7 @@ static struct zspage *isolate_zspage(struct size_class *class, bool source)
 	}
 
 	for (i = 0; i < 2; i++) {
-		zspage = list_first_entry_or_null(&class->fullness_list[fg[i]],
-							struct zspage, list);
+		zspage = class_get_zspage(class, fg[i], !source);
 		if (zspage) {
 			VM_BUG_ON(is_zspage_isolated(zspage));
 			remove_zspage(class, zspage, fg[i]);
@@ -2285,22 +2300,38 @@ static unsigned long zs_can_compact(struct size_class *class)
 	return obj_wasted * class->pages_per_zspage;
 }
 
-static void __zs_compact(struct zs_pool *pool, struct size_class *class)
+static unsigned long __zs_compact(struct zs_pool *pool,
+				  struct size_class *class)
 {
 	struct zs_compact_control cc;
 	struct zspage *src_zspage;
 	struct zspage *dst_zspage = NULL;
+	unsigned long pages_freed = 0;
+	unsigned long obj_migrated;
 
 	spin_lock(&class->lock);
+	obj_migrated = zs_stat_get(class, OBJ_MIGRATED);
 	while ((src_zspage = isolate_zspage(class, true))) {
 
+		int src_used, dst_used;
 		if (!zs_can_compact(class))
 			break;
+
+		dst_zspage = isolate_zspage(class, false);
+		/* Stop if we couldn't find slot */
+		if (dst_zspage == NULL)
+			break;
+
+		src_used = get_zspage_inuse(src_zspage);
+		dst_used = get_zspage_inuse(dst_zspage);
+		if (unlikely(src_used > dst_used)) {
+			swap(src_zspage, dst_zspage);
+		}
 
 		cc.obj_idx = 0;
 		cc.s_page = get_first_page(src_zspage);
 
-		while ((dst_zspage = isolate_zspage(class, false))) {
+		while (dst_zspage) {
 			cc.d_page = get_first_page(dst_zspage);
 			/*
 			 * If there is no more space in dst_page, resched
@@ -2310,6 +2341,7 @@ static void __zs_compact(struct zs_pool *pool, struct size_class *class)
 				break;
 
 			putback_zspage(class, dst_zspage);
+			dst_zspage = isolate_zspage(class, false);
 		}
 
 		/* Stop if we couldn't find slot */
@@ -2319,7 +2351,7 @@ static void __zs_compact(struct zs_pool *pool, struct size_class *class)
 		putback_zspage(class, dst_zspage);
 		if (putback_zspage(class, src_zspage) == ZS_EMPTY) {
 			free_zspage(pool, class, src_zspage);
-			pool->stats.pages_compacted += class->pages_per_zspage;
+			pages_freed += class->pages_per_zspage;
 		}
 		spin_unlock(&class->lock);
 		cond_resched();
@@ -2329,13 +2361,18 @@ static void __zs_compact(struct zs_pool *pool, struct size_class *class)
 	if (src_zspage)
 		putback_zspage(class, src_zspage);
 
+	obj_migrated = zs_stat_get(class, OBJ_MIGRATED) - obj_migrated;
 	spin_unlock(&class->lock);
+	atomic_long_add(obj_migrated, &pool->stats.obj_migrated);
+
+	return pages_freed;
 }
 
 unsigned long zs_compact(struct zs_pool *pool)
 {
 	int i;
 	struct size_class *class;
+	unsigned long pages_freed = 0;
 
 	for (i = ZS_SIZE_CLASSES - 1; i >= 0; i--) {
 		class = pool->size_class[i];
@@ -2343,10 +2380,11 @@ unsigned long zs_compact(struct zs_pool *pool)
 			continue;
 		if (class->index != i)
 			continue;
-		__zs_compact(pool, class);
+		pages_freed += __zs_compact(pool, class);
 	}
+	atomic_long_add(pages_freed, &pool->stats.pages_compacted);
 
-	return pool->stats.pages_compacted;
+	return pages_freed;
 }
 EXPORT_SYMBOL_GPL(zs_compact);
 
@@ -2363,13 +2401,12 @@ static unsigned long zs_shrinker_scan(struct shrinker *shrinker,
 	struct zs_pool *pool = container_of(shrinker, struct zs_pool,
 			shrinker);
 
-	pages_freed = pool->stats.pages_compacted;
 	/*
 	 * Compact classes and calculate compaction delta.
 	 * Can run concurrently with a manually triggered
 	 * (by user) compaction.
 	 */
-	pages_freed = zs_compact(pool) - pages_freed;
+	pages_freed = zs_compact(pool);
 
 	return pages_freed ? pages_freed : SHRINK_STOP;
 }
