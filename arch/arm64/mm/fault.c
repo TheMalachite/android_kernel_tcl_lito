@@ -268,6 +268,9 @@ static inline bool is_el1_permission_fault(unsigned int esr,
 
 	return false;
 }
+/* [TCTNB-SYS][CrashDump]Begin added by Alvin.Lee for XR9930881 on 2020/09/14 */
+#include <soc/qcom/panic-reason.h>
+/* [TCTNB-SYS][CrashDump]-End- added by Alvin.Lee for XR9930881 on 2020/09/14 */
 
 static void die_kernel_fault(const char *msg, unsigned long addr,
 			     unsigned int esr, struct pt_regs *regs)
@@ -308,6 +311,9 @@ static void __do_kernel_fault(unsigned long addr, unsigned int esr,
 		msg = "paging request";
 	}
 
+/* [TCTNB-SYS][CrashDump]Begin added by Alvin.Lee for XR9930881 on 2020/09/14 */
+    machine_fault(msg, addr);
+/* [TCTNB-SYS][CrashDump]-End- added by Alvin.Lee for XR9930881 on 2020/09/14 */
 	die_kernel_fault(msg, addr, esr, regs);
 }
 

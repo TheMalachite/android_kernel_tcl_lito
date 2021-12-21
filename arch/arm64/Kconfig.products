@@ -1,0 +1,33 @@
+menu "Products selection"
+config TCT_LITO_COMMON
+	bool "SM7250 TCT COMMON CONFIG"
+	depends on ARCH_LITO
+	help
+	  Support for TCT common device configration.
+
+config TCT_LITO_SEATTLE
+	bool "SM7250 TCT SEATTLE"
+	depends on ARCH_LITO
+	help
+	  Support for TCT Seattle device.
+
+config TCT_LITO_OTTAWA
+	bool "SM6350 TCT OTTAWA"
+	depends on ARCH_LITO
+	help
+	  Support for TCT Ottawa device.
+
+config TCT_LITO_CHICAGO
+	bool "SM7250 TCT CHICAGO"
+	depends on ARCH_LITO
+	help
+	  Support for TCT Chicago device.
+endmenu
+
+#[SYSD SYS]begin: add by yange.zhang for task 11024429, 2021-04-14(smartlog)
+config TCT_LITO_IRVINE
+	bool "SM6350 TCT IRVINE"
+	depends on ARCH_LITO
+	help
+	  Support for TCT Irvine device.
+#[SYSD SYS]end: add by yange.zhang for task 11024429, 2021-04-14(smartlog)

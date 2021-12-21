@@ -190,11 +190,19 @@ void show_stack(struct task_struct *tsk, unsigned long *sp)
 #endif
 #define S_SMP " SMP"
 
+/* [TCTNB-SYS][CrashDump]Begin added by Alvin.Lee for XR9930881 on 2020/09/14 */
+#include <soc/qcom/panic-reason.h>
+/* [TCTNB-SYS][CrashDump]-End- added by Alvin.Lee for XR9930881 on 2020/09/14 */
+
 static int __die(const char *str, int err, struct pt_regs *regs)
 {
 	struct task_struct *tsk = current;
 	static int die_counter;
 	int ret;
+
+/* [TCTNB-SYS][CrashDump]Begin added by Alvin.Lee for XR9930881 on 2020/09/14 */
+    machine_die(str, err, regs);
+/* [TCTNB-SYS][CrashDump]-End- added by Alvin.Lee for XR9930881 on 2020/09/14 */
 
 	pr_emerg("Internal error: %s: %x [#%d]" S_PREEMPT S_SMP "\n",
 		 str, err, ++die_counter);
