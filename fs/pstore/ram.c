@@ -36,15 +36,43 @@
 #include <linux/of.h>
 #include <linux/of_address.h>
 
-#define RAMOOPS_KERNMSG_HDR "===="
-#define MIN_MEM_SIZE 4096UL
+/* [TCT-SYS][SMARTLOG]Begin added by xiaoyang.ye, 2020-02-09, TASK-10730835 */
+#ifdef CONFIG_SMARTLOG_EMMC
+#include <linux/proc_fs.h>
+#include <linux/seq_file.h>
+#include "internal.h"
+#include "smart_log_ke.h"
+#define SMARTLOG_PSTORE_MEM_ADDR (SCL_TCT_SMARTLOG_RAM_BASE+SMARTLOG_KERNEL_OFFSET)
+#define SMARTLOG_PSTORE_RECORD_SIZE (SMARTLOG_KERNEL_SIZE)
+#define SMARTLOG_PSTORE_MEM_SIZE (SMARTLOG_KERNEL_SIZE)
+static struct smartlog_header *smartlog_hdr = NULL;
+static struct kernel_log_header *klog_hdr;
+static uint smart_log_status = BUFF_NOT_READY;
+#endif
 
-static ulong record_size = MIN_MEM_SIZE;
+#define RAMOOPS_KERNMSG_HDR "===="
+
+#ifdef CONFIG_SMARTLOG_EMMC
+//leave 0 to min size, so we can allocate more recorder for dmesg
+#define MIN_MEM_SIZE 0
+#else
+#define MIN_MEM_SIZE 4096UL
+#endif
+
+#ifdef SMARTLOG_PSTORE_RECORD_SIZE
+static ulong record_size = SMARTLOG_PSTORE_RECORD_SIZE;
+#else
+static ulong record_size = 0x40000;
+#endif
 module_param(record_size, ulong, 0400);
 MODULE_PARM_DESC(record_size,
 		"size of each dump done on oops/panic");
 
-static ulong ramoops_console_size = MIN_MEM_SIZE;
+#ifdef SMARTLOG_PSTORE_RECORD_SIZE
+static ulong ramoops_console_size = 0;
+#else
+static ulong ramoops_console_size = 0x200000;
+#endif
 module_param_named(console_size, ramoops_console_size, ulong, 0400);
 MODULE_PARM_DESC(console_size, "size of kernel console log");
 
@@ -52,16 +80,38 @@ static ulong ramoops_ftrace_size = MIN_MEM_SIZE;
 module_param_named(ftrace_size, ramoops_ftrace_size, ulong, 0400);
 MODULE_PARM_DESC(ftrace_size, "size of ftrace log");
 
-static ulong ramoops_pmsg_size = MIN_MEM_SIZE;
+#ifdef SMARTLOG_PSTORE_RECORD_SIZE
+static ulong ramoops_pmsg_size = 0;
+#else
+static ulong ramoops_pmsg_size = 0x100000;
+#endif
 module_param_named(pmsg_size, ramoops_pmsg_size, ulong, 0400);
 MODULE_PARM_DESC(pmsg_size, "size of user space message log");
 
+#ifdef CONFIG_TCT_LITO_SEATTLE
+static unsigned long long mem_address = 0xb7e00000;
+#else
+//[SYSD SYS]modify by yange.zhang for task 11024429, 2021-04-14(smartlog): add CONFIG_TCT_LITO_IRVINE
+#if defined(CONFIG_TCT_LITO_OTTAWA) || defined (CONFIG_TCT_LITO_IRVINE)
+#ifdef SMARTLOG_PSTORE_MEM_ADDR
+static unsigned long long mem_address = SMARTLOG_PSTORE_MEM_ADDR;
+#else
+static unsigned long long mem_address = 0x9b000000;
+#endif
+#else
 static unsigned long long mem_address;
+#endif
+#endif
 module_param_hw(mem_address, ullong, other, 0400);
 MODULE_PARM_DESC(mem_address,
 		"start of reserved RAM used to store oops/panic logs");
 
-static ulong mem_size;
+#ifdef SMARTLOG_PSTORE_MEM_SIZE
+static ulong mem_size = SMARTLOG_PSTORE_MEM_SIZE;
+#else
+static ulong mem_size = 0x400000;
+#endif
+/* [TCT-SYS][SMARTLOG]End added by xiaoyang.ye, TASK-10730835 */
 module_param(mem_size, ulong, 0400);
 MODULE_PARM_DESC(mem_size,
 		"size of reserved RAM used to store oops/panic logs");
@@ -386,6 +436,14 @@ static int notrace ramoops_pstore_write(struct pstore_record *record)
 		if (!cxt->cprz)
 			return -ENOMEM;
 		persistent_ram_write(cxt->cprz, record->buf, record->size);
+/* [TCT-SYS][SMARTLOG]Begin added by xiaoyang.ye, 2020-02-09, TASK-10730835 */
+#ifdef CONFIG_SMARTLOG_EMMC
+		/*only on console log is write*/
+		if(smart_log_status == BUFF_READY){
+			klog_hdr->sz_console = record->size;
+		}
+#endif
+/* [TCT-SYS][SMARTLOG]End added by xiaoyang.ye, TASK-10730835 */
 		return 0;
 	} else if (record->type == PSTORE_TYPE_FTRACE) {
 		int zonenum;
@@ -411,6 +469,9 @@ static int notrace ramoops_pstore_write(struct pstore_record *record)
 	if (record->type != PSTORE_TYPE_DMESG)
 		return -EINVAL;
 
+/* [TCT-SYS][SMARTLOG]Begin added by xiaoyang.ye, 2020-02-09, TASK-10730835 */
+#ifndef CONFIG_SMARTLOG_EMMC
+	// we record more log, not only panic log, it is used for last_kmsg
 	/*
 	 * Out of the various dmesg dump types, ramoops is currently designed
 	 * to only store crash logs, rather than storing general kernel logs.
@@ -422,7 +483,8 @@ static int notrace ramoops_pstore_write(struct pstore_record *record)
 	/* Skip Oopes when configured to do so. */
 	if (record->reason == KMSG_DUMP_OOPS && !cxt->dump_oops)
 		return -EINVAL;
-
+#endif
+/* [TCT-SYS][SMARTLOG]End added by xiaoyang.ye, TASK-10730835 */
 	/*
 	 * Explicitly only take the first part of any new crash.
 	 * If our buffer is larger than kmsg_bytes, this can never happen,
@@ -435,6 +497,25 @@ static int notrace ramoops_pstore_write(struct pstore_record *record)
 	if (!cxt->dprzs)
 		return -ENOSPC;
 
+/* [TCT-SYS][SMARTLOG]Begin added by xiaoyang.ye, 2020-02-09, TASK-10730835 */
+#ifdef CONFIG_SMARTLOG_EMMC
+	/* Skip Oopes when configured to do so.
+	 * but if panic_on_oops set, panic will coming, so we can igonre oops
+	 **/
+	if (record->reason == KMSG_DUMP_OOPS && (!cxt->dump_oops || panic_on_oops)){
+		pr_warning("Ignore oops kmsg, because panic will trigger!\n");
+		return -EINVAL;
+	}
+
+	/*
+	 * need write emmc when panic happend
+	 **/
+	if(record->reason <= KMSG_DUMP_OOPS && smart_log_status == BUFF_READY){
+		smartlog_hdr->flag |= NEED_WRITE_TO_EMMC;
+		klog_hdr->flag |= BOOT_EXCEPTION;
+	}
+#endif
+/* [TCT-SYS][SMARTLOG]End added by xiaoyang.ye, TASK-10730835 */
 	prz = cxt->dprzs[cxt->dump_write_cnt];
 
 	/*
@@ -454,7 +535,13 @@ static int notrace ramoops_pstore_write(struct pstore_record *record)
 	if (size + hlen > prz->buffer_size)
 		size = prz->buffer_size - hlen;
 	persistent_ram_write(prz, record->buf, size);
-
+/* [TCT-SYS][SMARTLOG]Begin added by xiaoyang.ye, 2020-02-09, TASK-10730835 */
+#ifdef CONFIG_SMARTLOG_EMMC
+	if(smart_log_status == BUFF_READY){
+		klog_hdr->sz_dump = (size + hlen);
+	}
+#endif
+/* [TCT-SYS][SMARTLOG]End added by xiaoyang.ye, TASK-10730835 */
 	cxt->dump_write_cnt = (cxt->dump_write_cnt + 1) % cxt->max_dump_cnt;
 
 	return 0;
@@ -986,6 +1073,114 @@ static void __exit ramoops_exit(void)
 	ramoops_unregister_dummy();
 }
 module_exit(ramoops_exit);
+
+/* [TCT-SYS][SMARTLOG]Begin added by xiaoyang.ye, 2020-02-09, TASK-10730835 */
+#ifdef CONFIG_SMARTLOG_EMMC
+static void *smartlog_ram_buffer_map(phys_addr_t start, phys_addr_t size, int memtype)
+{
+    void *vaddr;
+    if (pfn_valid(start >> PAGE_SHIFT))
+        vaddr = persistent_ram_vmap(start, size, memtype);
+    else
+        vaddr = persistent_ram_iomap(start, size, memtype);
+
+    if (!vaddr) {
+        pr_err("%s: Failed to map 0x%llx pages at 0x%llx\n", __func__,
+            (unsigned long long)size, (unsigned long long)start);
+        return NULL;
+    }
+    return vaddr;
+}
+
+/* show uefi log */
+static int smartlog_boot_log_show(struct seq_file *m, void *v)
+{
+    void *pbuf = NULL;
+    uint32 size;
+    pbuf =  (uint8 *)smartlog_hdr + SMARTLOG_BOOTLOG_OFFSET;
+    size = SMARTLOG_BOOTLOG_SIZE;
+    if(pbuf != NULL && size > 0){
+        seq_write(m, (void *)pbuf, size);
+    }else{
+        pr_err("Cannot get sbl_lk log buffer!\n");
+    }
+    return 0;
+}
+
+static int smartlog_boot_log_open(struct inode *inode, struct file *file)
+{
+    return single_open(file, smartlog_boot_log_show, inode->i_private);
+}
+
+static const struct file_operations smartlog_boot_log_ops = {
+    .owner = THIS_MODULE,
+    .open = smartlog_boot_log_open,
+    .read = seq_read,
+    .llseek = seq_lseek,
+    .release = single_release,
+};
+/* show proc/boot_log log */
+static void smartlog_boot_log_init(void)
+{
+    struct proc_dir_entry *entry;
+    entry = proc_create("boot_log", 0444, NULL, &smartlog_boot_log_ops);
+    if(!entry){
+        pr_err("failed to create proc/boot_log entry!\n");
+    }
+}
+/*klog header init*/
+static void smartlog_klog_init(struct kernel_log_header *klog_hdr)
+{
+    struct ramoops_context *cxt = &oops_cxt;
+    klog_hdr->sig = LOG_HEADER_SIG;
+    klog_hdr->klog_size = SMARTLOG_KERNEL_SIZE;
+    klog_hdr->klog_start = cxt->phys_addr;
+    klog_hdr->sz_dump = 0;
+    klog_hdr->sz_console = 0;
+    if(cxt->max_dump_cnt){
+        klog_hdr->flag = LOG_EARLY_PRINTK;
+    }
+    /*check kernel config memory size, warning user if not equal*/
+#ifdef SMARTLOG_PSTORE_MEM_SIZE
+    if(klog_hdr->klog_size != SMARTLOG_PSTORE_MEM_SIZE){
+        pr_warning("kernel log size not equal SMARTLOG_PSTORE_MEM_SIZE, please check!\n");
+    }
+#endif
+}
+
+static void smartlog_ram_init(void)
+{
+    unsigned long long mem_address = SCL_TCT_SMARTLOG_RAM_BASE;
+    /*change phys address to virtual address, we mapp header and sbl_lk log region*/
+    void *vaddr = smartlog_ram_buffer_map(mem_address, SMARTLOG_KERNEL_OFFSET, mem_type);
+
+    if(vaddr == NULL){
+        pr_err("faild to map smartlog address 0x%08llx\n", mem_address);
+        return;
+    }
+    smartlog_hdr = (struct smartlog_header *)(vaddr);
+    smartlog_hdr->flag |= LOG_LK_FINISH; //set lk finish flag
+
+    klog_hdr = &smartlog_hdr->klog_hdr;
+    smartlog_klog_init(klog_hdr);
+
+    smart_log_status = BUFF_READY;
+
+    /*show proc/boot_log log*/
+    smartlog_boot_log_init();
+}
+#endif /*CONFIG_SMARTLOG_EMMC*/
+
+static int __init smartlog_late_init(void)
+{
+#ifdef CONFIG_SMARTLOG_EMMC
+    smartlog_ram_init();
+#endif
+    return 0;
+}
+
+late_initcall(smartlog_late_init);
+/* [TCT-SYS][SMARTLOG]End added by xiaoyang.ye, TASK-10730835 */
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Marco Stornelli <marco.stornelli@gmail.com>");

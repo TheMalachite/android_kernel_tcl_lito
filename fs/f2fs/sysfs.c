@@ -352,26 +352,35 @@ out:
 		return -EINVAL;
 
 	if (!strcmp(a->attr.name, "gc_urgent")) {
-		if (t >= 1) {
-			sbi->gc_mode = GC_URGENT;
+		if (t == 0) {
+			sbi->gc_mode = GC_NORMAL;
+		} else if (t == 1) {
+			sbi->gc_mode = GC_URGENT_HIGH;
 			if (sbi->gc_thread) {
 				sbi->gc_thread->gc_wake = 1;
 				wake_up_interruptible_all(
 					&sbi->gc_thread->gc_wait_queue_head);
 				wake_up_discard_thread(sbi, true);
 			}
+		} else if (t == 2) {
+			sbi->gc_mode = GC_URGENT_LOW;
 		} else {
-			sbi->gc_mode = GC_NORMAL;
+			return -EINVAL;
 		}
 		return count;
 	}
 	if (!strcmp(a->attr.name, "gc_idle")) {
-		if (t == GC_IDLE_CB)
+		if (t == GC_IDLE_CB) {
 			sbi->gc_mode = GC_IDLE_CB;
-		else if (t == GC_IDLE_GREEDY)
+		} else if (t == GC_IDLE_GREEDY) {
 			sbi->gc_mode = GC_IDLE_GREEDY;
-		else
+		} else if (t == GC_IDLE_AT) {
+			if (!sbi->am.atgc_enabled)
+				return -EINVAL;
+			sbi->gc_mode = GC_AT;
+		} else {
 			sbi->gc_mode = GC_NORMAL;
+		}
 		return count;
 	}
 
@@ -886,6 +895,67 @@ static int __maybe_unused victim_bits_seq_show(struct seq_file *seq,
 	return 0;
 }
 
+#ifdef CONFIG_F2FS_TCT_EXT
+struct freefrag_data {
+	block_t total;
+	block_t frags;
+	block_t blocks[10];
+};
+
+static bool __maybe_unused count_freefrag(struct super_block *sb,
+					  unsigned int segno,
+					  unsigned int start,
+					  unsigned int len,
+					  void *priv)
+{
+	struct freefrag_data *ffd = priv;
+	int order = min_t(int, 10, fls(len)) - 1;
+	ffd->total += len;
+	ffd->frags++;
+	ffd->blocks[order] += len;
+	return false;
+}
+
+#define FFSZ(i) ((i) < 8 ?  (4<<(i)): (1<<((i)-8)))
+#define FFU(i) ((i) < 8 ? 'K' : 'M')
+static int __maybe_unused frag_info_seq_show(struct seq_file *seq,
+					     void *offset)
+{
+	struct super_block *sb = seq->private;
+	struct f2fs_sb_info *sbi = F2FS_SB(sb);
+	struct freefrag_data ffd;
+	unsigned int frag_score;
+	unsigned int i;
+	memset(&ffd, 0, sizeof(ffd));
+	f2fs_query_free_range(sb, 0, -1U, count_freefrag, &ffd);
+	frag_score = ffd.total ? ffd.frags * 100UL / ffd.total : 0;
+	seq_printf(seq, "total_segments: %u\n", TOTAL_SEGS(sbi));
+	seq_printf(seq, "free_segments: %u\n", free_segments(sbi));
+	seq_printf(seq, "prefree_segments: %u\n", prefree_segments(sbi));
+	seq_printf(seq, "dirty_segments: %u\n", dirty_segments(sbi));
+	seq_printf(seq, "reserved_segments: %u\n", reserved_segments(sbi));
+	seq_printf(seq, "ovp_segments: %u\n", overprovision_segments(sbi));
+	seq_printf(seq, "frag_score: %u\n", frag_score);
+	seq_printf(seq, "free_blocks: %u\n", ffd.total);
+	seq_printf(seq, "fragments: %u\n", ffd.frags);
+	for (i = 0; i < ARRAY_SIZE(ffd.blocks) - 1; i++) {
+		seq_printf(seq, "%u%cB-%u%cB: %u\n", FFSZ(i), FFU(i),
+			   FFSZ(i+1), FFU(i+1), ffd.blocks[i]);
+	}
+	seq_printf(seq, "%u%cB: %u\n", FFSZ(i), FFU(i), ffd.blocks[i]);
+
+	if (SM_I(sbi)->dcc_info) {
+		seq_printf(seq, "undiscard_blocks: %u\n",
+			   SM_I(sbi)->dcc_info->undiscard_blks);
+		seq_printf(seq, "nr_discard_cmd: %u\n",
+			   atomic_read(&SM_I(sbi)->dcc_info->discard_cmd_cnt));
+	}
+	return 0;
+}
+#undef FFSZ
+#undef FFU
+#endif
+
 int __init f2fs_init_sysfs(void)
 {
 	int ret;
@@ -942,6 +1012,10 @@ int f2fs_register_sysfs(struct f2fs_sb_info *sbi)
 				iostat_info_seq_show, sb);
 		proc_create_single_data("victim_bits", S_IRUGO, sbi->s_proc,
 				victim_bits_seq_show, sb);
+#ifdef CONFIG_F2FS_TCT_EXT
+		proc_create_single_data("frag_info", S_IRUGO, sbi->s_proc,
+				frag_info_seq_show, sb);
+#endif
 	}
 	return 0;
 }
@@ -949,6 +1023,9 @@ int f2fs_register_sysfs(struct f2fs_sb_info *sbi)
 void f2fs_unregister_sysfs(struct f2fs_sb_info *sbi)
 {
 	if (sbi->s_proc) {
+#ifdef CONFIG_F2FS_TCT_EXT
+		remove_proc_entry("frag_info", sbi->s_proc);
+#endif
 		remove_proc_entry("iostat_info", sbi->s_proc);
 		remove_proc_entry("segment_info", sbi->s_proc);
 		remove_proc_entry("segment_bits", sbi->s_proc);

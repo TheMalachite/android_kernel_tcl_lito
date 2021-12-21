@@ -32,6 +32,9 @@
 #include "gc.h"
 #include "trace.h"
 
+#ifdef CONFIG_F2FS_TCT_EXT
+#include <trace/events/block.h>
+#endif
 #define CREATE_TRACE_POINTS
 #include <trace/events/f2fs.h>
 
@@ -145,6 +148,7 @@ enum {
 	Opt_compress_algorithm,
 	Opt_compress_log_size,
 	Opt_compress_extension,
+	Opt_atgc,
 	Opt_err,
 };
 
@@ -212,6 +216,7 @@ static match_table_t f2fs_tokens = {
 	{Opt_compress_algorithm, "compress_algorithm=%s"},
 	{Opt_compress_log_size, "compress_log_size=%u"},
 	{Opt_compress_extension, "compress_extension=%s"},
+	{Opt_atgc, "atgc"},
 	{Opt_err, NULL},
 };
 
@@ -576,7 +581,8 @@ static int parse_options(struct super_block *sb, char *options, bool is_remount)
 		case Opt_active_logs:
 			if (args->from && match_int(args, &arg))
 				return -EINVAL;
-			if (arg != 2 && arg != 4 && arg != NR_CURSEG_TYPE)
+			if (arg != 2 && arg != 4 &&
+				arg != NR_CURSEG_PERSIST_TYPE)
 				return -EINVAL;
 			F2FS_OPTION(sbi).active_logs = arg;
 			break;
@@ -923,6 +929,9 @@ static int parse_options(struct super_block *sb, char *options, bool is_remount)
 			F2FS_OPTION(sbi).compress_ext_cnt++;
 			kfree(name);
 			break;
+		case Opt_atgc:
+			set_opt(sbi, ATGC);
+			break;
 		default:
 			f2fs_err(sbi, "Unrecognized mount option \"%s\" or missing value",
 				 p);
@@ -986,7 +995,7 @@ static int parse_options(struct super_block *sb, char *options, bool is_remount)
 	}
 
 	/* Not pass down write hints if the number of active logs is lesser
-	 * than NR_CURSEG_TYPE.
+	 * than NR_CURSEG_PERSIST_TYPE.
 	 */
 	if (F2FS_OPTION(sbi).active_logs != NR_CURSEG_TYPE)
 		F2FS_OPTION(sbi).whint_mode = WHINT_MODE_OFF;
@@ -1622,13 +1631,16 @@ static int f2fs_show_options(struct seq_file *seq, struct dentry *root)
 		seq_printf(seq, ",fsync_mode=%s", "nobarrier");
 
 	f2fs_show_compress_options(seq, sbi->sb);
+
+	if (test_opt(sbi, ATGC))
+		seq_puts(seq, ",atgc");
 	return 0;
 }
 
 static void default_options(struct f2fs_sb_info *sbi)
 {
 	/* init some FS parameters */
-	F2FS_OPTION(sbi).active_logs = NR_CURSEG_TYPE;
+	F2FS_OPTION(sbi).active_logs = NR_CURSEG_PERSIST_TYPE;
 	F2FS_OPTION(sbi).inline_xattr_size = DEFAULT_INLINE_XATTR_ADDRS;
 	F2FS_OPTION(sbi).whint_mode = WHINT_MODE_OFF;
 	F2FS_OPTION(sbi).alloc_mode = ALLOC_MODE_DEFAULT;
@@ -1663,6 +1675,9 @@ static void default_options(struct f2fs_sb_info *sbi)
 #endif
 #ifdef CONFIG_F2FS_FS_POSIX_ACL
 	set_opt(sbi, POSIX_ACL);
+#endif
+#ifdef CONFIG_F2FS_TCT_EXT
+	set_opt(sbi, ATGC);
 #endif
 
 	f2fs_build_fault_attr(sbi, 0, 0);
@@ -1752,6 +1767,7 @@ static int f2fs_remount(struct super_block *sb, int *flags, char *data)
 	bool no_extent_cache = !test_opt(sbi, EXTENT_CACHE);
 	bool disable_checkpoint = test_opt(sbi, DISABLE_CHECKPOINT);
 	bool no_io_align = !F2FS_IO_ALIGNED(sbi);
+	bool no_atgc = !test_opt(sbi, ATGC);
 	bool checkpoint_changed;
 #ifdef CONFIG_QUOTA
 	int i, j;
@@ -1824,6 +1840,13 @@ static int f2fs_remount(struct super_block *sb, int *flags, char *data)
 		}
 	}
 #endif
+	/* disallow enable atgc dynamically */
+	if (no_atgc == !!test_opt(sbi, ATGC)) {
+		err = -EINVAL;
+		f2fs_warn(sbi, "switch atgc option is not allowed");
+		goto restore_opts;
+	}
+
 	/* disallow enable/disable extent_cache dynamically */
 	if (no_extent_cache == !!test_opt(sbi, EXTENT_CACHE)) {
 		err = -EINVAL;
@@ -2996,7 +3019,7 @@ int f2fs_sanity_check_ckpt(struct f2fs_sb_info *sbi)
 	cp_payload = __cp_payload(sbi);
 	if (cp_pack_start_sum < cp_payload + 1 ||
 		cp_pack_start_sum > blocks_per_seg - 1 -
-			NR_CURSEG_TYPE) {
+			NR_CURSEG_PERSIST_TYPE) {
 		f2fs_err(sbi, "Wrong cp_pack_start_sum: %u",
 			 cp_pack_start_sum);
 		return 1;
@@ -3766,6 +3789,8 @@ try_onemore:
 		}
 	}
 reset_checkpoint:
+	f2fs_init_inmem_curseg(sbi);
+
 	/* f2fs_recover_fsync_data() cleared this already */
 	clear_sbi_flag(sbi, SBI_POR_DOING);
 
@@ -3944,6 +3969,41 @@ static void destroy_inodecache(void)
 	kmem_cache_destroy(f2fs_inode_cachep);
 }
 
+#ifdef CONFIG_F2FS_TCT_EXT
+/* CAUTION: check bio flags already exists in blk_types.h */
+#define BIO_TRACED 0
+static DEFINE_PER_CPU(local_t, io_pending) = LOCAL_INIT(0);
+static void f2fs_trace_bio_queue(void *ignore,
+				 struct request_queue *q, struct bio *bio)
+{
+	if (!is_gc_thread() && !op_is_discard(bio->bi_opf)) {
+		bio_set_flag(bio, BIO_TRACED);
+		local_inc(this_cpu_ptr(&io_pending));
+	}
+}
+
+static void f2fs_trace_bio_complete(void *ignore,
+				    struct request_queue *q, struct bio *bio,
+				    int error)
+{
+	if (bio_flagged(bio, BIO_TRACED)) {
+		bio_clear_flag(bio, BIO_TRACED);
+		local_dec(this_cpu_ptr(&io_pending));
+	}
+}
+
+bool f2fs_is_storage_idle(void)
+{
+	unsigned long nr_pending = 0;
+	int cpu;
+	for_each_possible_cpu(cpu) {
+		nr_pending += local_read(&per_cpu(io_pending, cpu));
+	}
+	trace_printk("nr_pending=%d\n", nr_pending);
+	return nr_pending == 0;
+}
+#endif
+
 static int __init init_f2fs_fs(void)
 {
 	int err;
@@ -3971,9 +4031,12 @@ static int __init init_f2fs_fs(void)
 	err = f2fs_create_extent_cache();
 	if (err)
 		goto free_checkpoint_caches;
-	err = f2fs_init_sysfs();
+	err = f2fs_create_garbage_collection_cache();
 	if (err)
 		goto free_extent_cache;
+	err = f2fs_init_sysfs();
+	if (err)
+		goto free_garbage_collection_cache;
 	err = register_shrinker(&f2fs_shrinker_info);
 	if (err)
 		goto free_sysfs;
@@ -3993,6 +4056,10 @@ static int __init init_f2fs_fs(void)
 	err = f2fs_init_compress_mempool();
 	if (err)
 		goto free_bioset;
+#ifdef CONFIG_F2FS_TCT_EXT
+	WARN_ON(register_trace_block_bio_complete(f2fs_trace_bio_complete, NULL));
+	WARN_ON(register_trace_block_bio_queue(f2fs_trace_bio_queue, NULL));
+#endif
 	return 0;
 free_bioset:
 	f2fs_destroy_bioset();
@@ -4007,6 +4074,8 @@ free_shrinker:
 	unregister_shrinker(&f2fs_shrinker_info);
 free_sysfs:
 	f2fs_exit_sysfs();
+free_garbage_collection_cache:
+	f2fs_destroy_garbage_collection_cache();
 free_extent_cache:
 	f2fs_destroy_extent_cache();
 free_checkpoint_caches:
@@ -4023,6 +4092,11 @@ fail:
 
 static void __exit exit_f2fs_fs(void)
 {
+#ifdef CONFIG_F2FS_TCT_EXT
+	WARN_ON(unregister_trace_block_bio_queue(f2fs_trace_bio_queue, NULL));
+	WARN_ON(unregister_trace_block_bio_complete(f2fs_trace_bio_complete, NULL));
+	tracepoint_synchronize_unregister();
+#endif
 	f2fs_destroy_compress_mempool();
 	f2fs_destroy_bioset();
 	f2fs_destroy_bio_entry_cache();
@@ -4031,6 +4105,7 @@ static void __exit exit_f2fs_fs(void)
 	unregister_filesystem(&f2fs_fs_type);
 	unregister_shrinker(&f2fs_shrinker_info);
 	f2fs_exit_sysfs();
+	f2fs_destroy_garbage_collection_cache();
 	f2fs_destroy_extent_cache();
 	f2fs_destroy_checkpoint_caches();
 	f2fs_destroy_segment_manager_caches();

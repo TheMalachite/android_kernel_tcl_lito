@@ -14,8 +14,26 @@
 #define DEF_GC_THREAD_MIN_SLEEP_TIME	30000	/* milliseconds */
 #define DEF_GC_THREAD_MAX_SLEEP_TIME	60000
 #define DEF_GC_THREAD_NOGC_SLEEP_TIME	300000	/* wait 5 min */
+
+/* choose candidates from sections which has age of more than 7 days */
+#define DEF_GC_THREAD_AGE_THRESHOLD		(60 * 60 * 24 * 7)
+#define DEF_GC_THREAD_CANDIDATE_RATIO		20	/* select 20% oldest sections as candidates */
+#define DEF_GC_THREAD_MAX_CANDIDATE_COUNT	10	/* select at most 10 sections as candidates */
+#define DEF_GC_THREAD_AGE_WEIGHT		60	/* age weight */
+#define DEFAULT_ACCURACY_CLASS			10000	/* accuracy class */
+
 #define LIMIT_INVALID_BLOCK	40 /* percentage over total user space */
 #define LIMIT_FREE_BLOCK	40 /* percentage over invalid + free space */
+
+#ifdef CONFIG_F2FS_TCT_EXT
+#undef DEF_GC_THREAD_MAX_SLEEP_TIME
+#undef DEF_GC_THREAD_NOGC_SLEEP_TIME
+#undef LIMIT_INVALID_BLOCK
+#define DEF_GC_THREAD_MAX_SLEEP_TIME	300000  /* 5min */
+#define DEF_GC_THREAD_NOGC_SLEEP_TIME	600000	/* wait 10 min */
+#define MIN_GC_THREAD_SLEEP_TIME	1000
+#define LIMIT_INVALID_BLOCK	10 /* percentage over total user space */
+#endif
 
 #define DEF_GC_FAILED_PINNED_FILES	2048
 
@@ -39,6 +57,23 @@ struct f2fs_gc_kthread {
 struct gc_inode_list {
 	struct list_head ilist;
 	struct radix_tree_root iroot;
+};
+
+struct victim_info {
+	unsigned long long mtime;	/* mtime of section */
+	unsigned int segno;		/* section No. */
+};
+
+struct victim_entry {
+	struct rb_node rb_node;		/* rb node located in rb-tree */
+	union {
+		struct {
+			unsigned long long mtime;	/* mtime of section */
+			unsigned int segno;		/* segment No. */
+		};
+		struct victim_info vi;	/* victim info */
+	};
+	struct list_head list;
 };
 
 /*
@@ -108,3 +143,32 @@ static inline bool has_enough_invalid_blocks(struct f2fs_sb_info *sbi)
 		return true;
 	return false;
 }
+
+#ifdef CONFIG_F2FS_TCT_EXT
+static inline void tune_gc_wait_time(struct f2fs_sb_info *sbi, int *wait_ms)
+{
+	block_t invalid_user_blocks = sbi->user_block_count -
+					written_block_count(sbi);
+
+	bool speedup_gc = free_segments(sbi) < 3*overprovision_segments(sbi) &&
+		free_user_blocks(sbi) < invalid_user_blocks/10;
+
+	if (speedup_gc) {
+		*wait_ms = MIN_GC_THREAD_SLEEP_TIME;
+	}
+}
+
+static inline void wake_up_gc_thread_ondemand(struct f2fs_sb_info *sbi)
+{
+	static unsigned long last_wakeup_time = 0;
+	bool wakeup = time_is_before_jiffies(last_wakeup_time + 60*HZ) &&
+			f2fs_need_SSR(sbi);
+
+	if (wakeup && waitqueue_active(&sbi->gc_thread->gc_wait_queue_head)) {
+		last_wakeup_time = get_jiffies_64();
+		f2fs_info(sbi, "trigger f2fs gc ondemand.");
+		sbi->gc_thread->gc_wake = 1;
+		wake_up_interruptible_all(&sbi->gc_thread->gc_wait_queue_head);
+	}
+}
+#endif

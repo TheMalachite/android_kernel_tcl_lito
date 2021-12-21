@@ -35,7 +35,9 @@ static ssize_t fuse_conn_abort_write(struct file *file, const char __user *buf,
 {
 	struct fuse_conn *fc = fuse_ctl_file_conn_get(file);
 	if (fc) {
-		fuse_abort_conn(fc, true);
+		if (fc->abort_err)
+			fc->aborted = true;
+		fuse_abort_conn(fc);
 		fuse_conn_put(fc);
 	}
 	return count;
@@ -125,7 +127,12 @@ static ssize_t fuse_conn_max_background_write(struct file *file,
 	if (ret > 0) {
 		struct fuse_conn *fc = fuse_ctl_file_conn_get(file);
 		if (fc) {
+			spin_lock(&fc->bg_lock);
 			fc->max_background = val;
+			fc->blocked = fc->num_background >= fc->max_background;
+			if (!fc->blocked)
+				wake_up(&fc->blocked_waitq);
+			spin_unlock(&fc->bg_lock);
 			fuse_conn_put(fc);
 		}
 	}
@@ -155,18 +162,31 @@ static ssize_t fuse_conn_congestion_threshold_write(struct file *file,
 						    size_t count, loff_t *ppos)
 {
 	unsigned uninitialized_var(val);
+	struct fuse_conn *fc;
 	ssize_t ret;
 
 	ret = fuse_conn_limit_write(file, buf, count, ppos, &val,
 				    max_user_congthresh);
-	if (ret > 0) {
-		struct fuse_conn *fc = fuse_ctl_file_conn_get(file);
-		if (fc) {
-			fc->congestion_threshold = val;
-			fuse_conn_put(fc);
+	if (ret <= 0)
+		goto out;
+	fc = fuse_ctl_file_conn_get(file);
+	if (!fc)
+		goto out;
+
+	spin_lock(&fc->bg_lock);
+	fc->congestion_threshold = val;
+	if (fc->sb) {
+		if (fc->num_background < fc->congestion_threshold) {
+			clear_bdi_congested(fc->sb->s_bdi, BLK_RW_SYNC);
+			clear_bdi_congested(fc->sb->s_bdi, BLK_RW_ASYNC);
+		} else {
+			set_bdi_congested(fc->sb->s_bdi, BLK_RW_SYNC);
+			set_bdi_congested(fc->sb->s_bdi, BLK_RW_ASYNC);
 		}
 	}
-
+	spin_unlock(&fc->bg_lock);
+	fuse_conn_put(fc);
+out:
 	return ret;
 }
 
@@ -195,6 +215,55 @@ static const struct file_operations fuse_conn_congestion_threshold_ops = {
 	.write = fuse_conn_congestion_threshold_write,
 	.llseek = no_llseek,
 };
+
+#ifdef CONFIG_FUSE_PASSTHROUGH_WORKAROUND
+static ssize_t fuse_conn_fh_to_fd_read(struct file *file,
+				       char __user *buf, size_t len,
+				       loff_t *ppos)
+{
+	struct fuse_conn *fc;
+	int val;
+	char tmp[12];
+	size_t size;
+
+	fc = fuse_ctl_file_conn_get(file);
+	if (!fc)
+		return 0;
+
+	val = READ_ONCE(fc->fh_to_fd);
+	fuse_conn_put(fc);
+
+	size = snprintf(tmp, sizeof(tmp), "%d\n", val);
+	return simple_read_from_buffer(buf, len, ppos, tmp, size);
+}
+
+static ssize_t fuse_conn_fh_to_fd_write(struct file *file,
+					const char __user *buf,
+					size_t count, loff_t *ppos)
+{
+	int val, err;
+	struct fuse_conn *fc;
+
+	err = kstrtoint_from_user(buf, count, 0, &val);
+	if (err)
+		return err;
+
+	fc = fuse_ctl_file_conn_get(file);
+	if (fc) {
+		fc->fh_to_fd = val;
+		fuse_conn_put(fc);
+	}
+
+	return count;
+}
+
+static const struct file_operations fuse_conn_fh_to_fd_ops = {
+	.open = nonseekable_open,
+	.read = fuse_conn_fh_to_fd_read,
+	.write = fuse_conn_fh_to_fd_write,
+	.llseek = no_llseek,
+};
+#endif
 
 static struct dentry *fuse_ctl_add_dentry(struct dentry *parent,
 					  struct fuse_conn *fc,
@@ -267,6 +336,10 @@ int fuse_ctl_add_conn(struct fuse_conn *fc)
 				 &fuse_conn_congestion_threshold_ops))
 		goto err;
 
+#ifdef CONFIG_FUSE_PASSTHROUGH_WORKAROUND
+	fuse_ctl_add_dentry(parent, fc, "fh_to_fd", S_IFREG | 0600,
+			    1, NULL, &fuse_conn_fh_to_fd_ops);
+#endif
 	return 0;
 
  err:

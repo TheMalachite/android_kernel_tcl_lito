@@ -153,3 +153,19 @@ config PSTORE_RAM
 	  "ramoops.ko".
 
 	  For more information, see Documentation/admin-guide/ramoops.rst.
+#[SYSD SYS]begin: modify by yange.zhang for task 11024429, 2021-04-14(smartlog)
+config SMARTLOG_MEM_ADDR
+	hex "smartlog default physical memory address"
+	depends on PSTORE
+	depends on SMARTLOG_EMMC
+	help
+	  The option is used as the default value of smartlog address.
+
+config SMARTLOG_EMMC
+	bool "kernel smartlog to emmc"
+	default n
+	depends on PSTORE
+	help
+	  The option is used as the smartlog is write to emmc
+#[SYSD SYS]end: modify by yange.zhang for task 11024429, 2021-04-14(smartlog)
+

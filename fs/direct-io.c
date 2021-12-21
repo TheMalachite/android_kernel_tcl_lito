@@ -38,6 +38,9 @@
 #include <linux/uio.h>
 #include <linux/atomic.h>
 #include <linux/prefetch.h>
+#ifdef CONFIG_TCT_IOLIMIT
+#include <linux/iolimit_cgroup.h>
+#endif
 
 /*
  * How many user pages to map in one call to get_user_pages().  This determines
@@ -1004,7 +1007,12 @@ static int do_direct_IO(struct dio *dio, struct dio_submit *sdio,
 			unsigned this_chunk_bytes;	/* # of bytes mapped */
 			unsigned this_chunk_blocks;	/* # of blocks */
 			unsigned u;
-
+#ifdef CONFIG_TCT_IOLIMIT
+			if (dio->op == REQ_OP_WRITE)
+				io_write_bandwidth_control(PAGE_SIZE);
+			else
+				io_read_bandwidth_control(PAGE_SIZE);
+#endif
 			if (sdio->blocks_available == 0) {
 				/*
 				 * Need to go and map some more disk

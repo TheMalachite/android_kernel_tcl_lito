@@ -41,4 +41,8 @@ extern void	pstore_record_init(struct pstore_record *record,
 int __init	pstore_init_fs(void);
 void __exit	pstore_exit_fs(void);
 
+extern void *persistent_ram_vmap(phys_addr_t start, size_t size,
+        unsigned int memtype);
+extern void *persistent_ram_iomap(phys_addr_t start, size_t size,
+        unsigned int memtype);
 #endif

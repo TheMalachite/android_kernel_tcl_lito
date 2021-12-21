@@ -397,7 +397,7 @@ void persistent_ram_zap(struct persistent_ram_zone *prz)
 	persistent_ram_update_header_ecc(prz);
 }
 
-static void *persistent_ram_vmap(phys_addr_t start, size_t size,
+void *persistent_ram_vmap(phys_addr_t start, size_t size,
 		unsigned int memtype)
 {
 	struct page **pages;
@@ -437,7 +437,7 @@ static void *persistent_ram_vmap(phys_addr_t start, size_t size,
 	return vaddr + offset_in_page(start);
 }
 
-static void *persistent_ram_iomap(phys_addr_t start, size_t size,
+void *persistent_ram_iomap(phys_addr_t start, size_t size,
 		unsigned int memtype)
 {
 	void *va;

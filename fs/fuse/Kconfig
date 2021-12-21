@@ -26,3 +26,8 @@ config CUSE
 
 	  If you want to develop or use a userspace character device
 	  based on CUSE, answer Y or M.
+
+config FUSE_PASSTHROUGH_WORKAROUND
+	bool "FUSE passthrough workaround for Android 11"
+	depends on FUSE_FS
+	default y
