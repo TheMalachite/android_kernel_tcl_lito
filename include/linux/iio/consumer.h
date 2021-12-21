@@ -226,6 +226,12 @@ int iio_read_channel_average_raw(struct iio_channel *chan, int *val);
  */
 int iio_read_channel_processed(struct iio_channel *chan, int *val);
 
+/* Begin added by hailong.chen for task 9656602 on 2020-09-09 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+int iio_read_channel_processed_two(struct iio_channel *chan, int *val1, int *val2);
+#endif
+/* End added by hailong.chen for task 9656602 on 2020-09-09 */
+
 /**
  * iio_write_channel_attribute() - Write values to the device attribute.
  * @chan:	The channel being queried.

@@ -286,6 +286,10 @@ int mipi_dsi_dcs_set_display_brightness(struct mipi_dsi_device *dsi,
 					u16 brightness);
 int mipi_dsi_dcs_get_display_brightness(struct mipi_dsi_device *dsi,
 					u16 *brightness);
+#ifdef CONFIG_TCT_LITO_CHICAGO
+int mipi_dsi_dcs_set_display_brightness_chicago(struct mipi_dsi_device *dsi,
+					u16 brightness, u8 panel_type);
+#endif
 
 /**
  * struct mipi_dsi_driver - DSI driver

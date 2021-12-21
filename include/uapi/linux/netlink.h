@@ -32,7 +32,13 @@
 #define NETLINK_SOCKEV		23	/* Socket Administrative Events */
 #define NETLINK_INET_DIAG	NETLINK_SOCK_DIAG
 
-#define MAX_LINKS 32		
+#if (defined(CONFIG_TCT_THREAD_BOOST) || defined(CONFIG_TCT_CPULOAD_NOTI))
+#define NETLINK_HW_IAWARE_CPU 33
+#define MAX_LINKS 42
+#else
+#define MAX_LINKS  32	
+#endif
+
 
 struct sockaddr_nl {
 	__kernel_sa_family_t	nl_family;	/* AF_NETLINK	*/

@@ -29,7 +29,18 @@
 #define THROTL_IOPS_MAX		UINT_MAX
 
 #ifdef CONFIG_BLK_CGROUP
-
+#ifdef CONFIG_TCT_IOLIMIT
+//[TCT-ROM]Begin added by xizheng.mo for 9572106 blkio type on 20200716
+enum blk_throtl_type {
+  	BLK_THROTL_TA,
+  	BLK_THROTL_FG,
+  	BLK_THROTL_KBG,
+  	BLK_THROTL_SBG,
+  	BLK_THROTL_BG,
+  	BLK_THROTL_TYPE_NR,
+  };
+//[TCT-ROM]End added by xizheng.mo for 9572106 blkio type on 20200716
+#endif
 enum blkg_rwstat_type {
 	BLKG_RWSTAT_READ,
 	BLKG_RWSTAT_WRITE,
@@ -57,6 +68,11 @@ struct blkcg {
 #ifdef CONFIG_CGROUP_WRITEBACK
 	struct list_head		cgwb_list;
 	refcount_t			cgwb_refcnt;
+#endif
+#ifdef CONFIG_TCT_IOLIMIT
+//[TCT-ROM]Begin added by xizheng.mo for 9572106 blkio type on 20200716
+        unsigned int			type;
+//[TCT-ROM]End added by xizheng.mo for 9572106 blkio type on 20200716
 #endif
 };
 
@@ -235,7 +251,14 @@ static inline struct blkcg *css_to_blkcg(struct cgroup_subsys_state *css)
 {
 	return css ? container_of(css, struct blkcg, css) : NULL;
 }
-
+#ifdef CONFIG_TCT_IOLIMIT
+//[TCT-ROM]Begin added by xizheng.mo for 9572106 blkio type on 20200716
+static inline struct blkcg *task_blkcg(struct task_struct *tsk)
+{
+  	return css_to_blkcg(task_css(tsk, io_cgrp_id));
+}
+//[TCT-ROM]End by xizheng.mo for 9572106 blkio type on 20200716
+#endif
 static inline struct blkcg *bio_blkcg(struct bio *bio)
 {
 	struct cgroup_subsys_state *css;

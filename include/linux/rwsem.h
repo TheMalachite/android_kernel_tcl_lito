@@ -46,6 +46,9 @@ struct rw_semaphore {
 	/* count for waiters preempt to queue in wait list */
 	long m_count;
 #endif
+#ifdef CONFIG_TCT_UI_TURBO
+	struct task_struct *ui_dep_task;
+#endif
 };
 
 /*
@@ -81,10 +84,18 @@ static inline int rwsem_is_locked(struct rw_semaphore *sem)
 # define __RWSEM_DEP_MAP_INIT(lockname)
 #endif
 
+#ifdef CONFIG_TCT_UI_TURBO
+#ifdef CONFIG_RWSEM_SPIN_ON_OWNER
+#define __RWSEM_OPT_INIT(lockname) , .osq = OSQ_LOCK_UNLOCKED, .owner = NULL, .ui_dep_task = NULL
+#else
+#define __RWSEM_OPT_INIT(lockname)
+#endif
+#else
 #ifdef CONFIG_RWSEM_SPIN_ON_OWNER
 #define __RWSEM_OPT_INIT(lockname) , .osq = OSQ_LOCK_UNLOCKED, .owner = NULL
 #else
 #define __RWSEM_OPT_INIT(lockname)
+#endif
 #endif
 
 #ifdef CONFIG_RWSEM_PRIO_AWARE

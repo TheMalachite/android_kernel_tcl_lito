@@ -89,6 +89,26 @@ static inline bool is_migrate_movable(int mt)
 	for (order = 0; order < MAX_ORDER; order++) \
 		for (type = 0; type < MIGRATE_TYPES; type++)
 
+#ifdef CONFIG_TCT_MEMORY_DEFRAG
+#ifndef CONFIG_FORCE_ZONEAREA_SHIFT
+#define AREA_SHIFT 2
+#else
+#define AREA_SHIFT CONFIG_FORCE_ZONEAREA_SHIFT
+#endif
+#define NR_AREA (1 << AREA_SHIFT)
+
+#define foreach_area_order(i, order, start) \
+	for(i = 0; i < NR_AREA; i++) \
+		for(order = start; order < MAX_ORDER; ++order)
+
+#define foreach_area_migratetype_order(i, order, type) \
+	for (i = 0; i < NR_AREA; ++i) \
+		for_each_migratetype_order(order, type)
+
+#define free_area_id(i, order) \
+    ((order) > PAGE_ALLOC_COSTLY_ORDER ? (NR_AREA - 1 - (i)) : i)
+#endif
+
 extern int page_group_by_mobility_disabled;
 
 #define NR_MIGRATETYPE_BITS (PB_migrate_end - PB_migrate + 1)
@@ -478,7 +498,11 @@ struct zone {
 	ZONE_PADDING(_pad1_)
 
 	/* free areas of different sizes */
+#ifdef CONFIG_TCT_MEMORY_DEFRAG
+	struct free_area	free_area[NR_AREA][MAX_ORDER];
+#else
 	struct free_area	free_area[MAX_ORDER];
+#endif
 
 	/* zone flags, see below */
 	unsigned long		flags;

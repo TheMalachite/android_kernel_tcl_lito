@@ -153,6 +153,47 @@ DEFINE_EVENT(sched_wakeup_template, sched_wakeup_new,
 	     TP_PROTO(struct task_struct *p),
 	     TP_ARGS(p));
 
+#ifdef CONFIG_TCT_UI_TURBO
+/*
+ * Tracepoint for sched uiturbo
+ */
+DECLARE_EVENT_CLASS(sched_uiturbo_template,
+
+	TP_PROTO(struct task_struct *p, char *msg),
+
+	TP_ARGS(__perf_task(p), msg),
+
+	TP_STRUCT__entry(
+		__array(	char,	comm,	TASK_COMM_LEN	)
+		__field(	pid_t,	pid			)
+		__field(	int,	prio			)
+		__array(	char,	msg, 	UITURBO_MSG_LEN	)
+		__field(	int,	target_cpu		)
+		__field(    u64,    dynamic_uiturbo)
+		__field(    int,    uiturbo_depth)
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->comm, p->comm, TASK_COMM_LEN);
+		__entry->pid		= p->pid;
+		__entry->prio		= p->prio;
+		memcpy(__entry->msg, msg, min((size_t)UITURBO_MSG_LEN, strlen(msg)+1));
+		__entry->target_cpu	= task_cpu(p);
+		__entry->dynamic_uiturbo   = atomic64_read(&p->dynamic_uiturbo);
+		__entry->uiturbo_depth     = p->uiturbo_depth;
+	),
+
+	TP_printk("comm=%s pid=%d prio=%d msg=%s target_cpu=%03d dynamic_uiturbo:%llx uiturbo_depth:%d",
+		  __entry->comm, __entry->pid, __entry->prio,
+		  __entry->msg, __entry->target_cpu, __entry->dynamic_uiturbo, __entry->uiturbo_depth)
+);
+
+DEFINE_EVENT(sched_uiturbo_template, sched_uiturbo_event,
+	     TP_PROTO(struct task_struct *p, char *msg),
+	     TP_ARGS(p, msg));
+
+#endif
+
 #ifdef CREATE_TRACE_POINTS
 static inline long __trace_sched_switch_state(bool preempt, struct task_struct *p)
 {
@@ -658,7 +699,47 @@ TRACE_EVENT(sched_blocked_reason,
 
 	TP_printk("pid=%d iowait=%d caller=%pS", __entry->pid, __entry->io_wait, __entry->caller)
 );
+#ifdef CONFIG_TCT_IOLIMIT
+//[Performance] Add begin xizheng.mo for 9808406 on 2020-08-24
+DECLARE_EVENT_CLASS(sched_iolimit_template,
 
+	TP_PROTO(struct task_struct *p, char *msg,int limit_count, int write_used, int may_cnt, int io_switch),
+
+	TP_ARGS(__perf_task(p), msg,limit_count, write_used, may_cnt, io_switch),
+
+	TP_STRUCT__entry(
+		__array(	char,	comm,	TASK_COMM_LEN	)
+		__field(	pid_t,	pid			)
+		__field(	int,	prio			)
+		__array(	char,	msg, 	TASK_COMM_LEN	)
+		__field(	int,	limit_count		)
+		__field(    int,    write_used)
+		__field(    int,    may_cnt)
+		__field(    int,    io_switch)
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->comm, p->comm, TASK_COMM_LEN);
+		__entry->pid		= p->pid;
+		__entry->prio		= p->prio;
+		memcpy(__entry->msg, msg, strlen(msg)+1 );
+		__entry->limit_count	= limit_count;
+		__entry->write_used   = write_used;
+		__entry->may_cnt     = may_cnt;
+		__entry->io_switch     = io_switch;
+	),
+
+	TP_printk("comm=%s pid=%d prio=%d msg=%s limit_count=%d write_used:=%d may_cnt:=%d io_switch=%d",
+		  __entry->comm, __entry->pid, __entry->prio,
+		  __entry->msg, __entry->limit_count, __entry->write_used, __entry->may_cnt,__entry->io_switch)
+);
+
+DEFINE_EVENT(sched_iolimit_template, sched_iolimit_event,
+	     TP_PROTO(struct task_struct *p, char *msg,int limit_count, int write_used, int may_cnt, int io_switch),
+	     TP_ARGS(p, msg,limit_count, write_used, may_cnt, io_switch));
+
+//[Performance] Add end by xizheng.mo for 9808406 on 2020-08-24
+#endif
 /*
  * Tracepoint for accounting runtime (time the task is executing
  * on a CPU).

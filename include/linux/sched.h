@@ -229,6 +229,27 @@ enum fps {
 /* Task command name length: */
 #define TASK_COMM_LEN			16
 
+#ifdef CONFIG_TCT_UI_TURBO
+enum DYNAMIC_UITURBO_TYPE
+{
+	DYNAMIC_UITURBO_BINDER = 0,
+	DYNAMIC_UITURBO_RWSEM,
+	DYNAMIC_UITURBO_MUTEX,
+	DYNAMIC_UITURBO_SEM,
+	DYNAMIC_UITURBO_FUTEX,
+	DYNAMIC_UITURBO_MAX,
+};
+#define UITURBO_MSG_LEN 64
+
+enum wait_type
+{
+	WT_NONE = 0,
+	WT_RWSEM = 1,
+	WT_MUTEX,
+	WT_FUTEX,
+};
+#endif
+
 enum task_event {
 	PUT_PREV_TASK   = 0,
 	PICK_NEXT_TASK  = 1,
@@ -828,6 +849,18 @@ struct task_struct {
 	/* Per task flags (PF_*), defined further below: */
 	unsigned int			flags;
 	unsigned int			ptrace;
+
+#ifdef CONFIG_TCT_UI_TURBO
+	int static_uiturbo;
+	int uiturbo_depth;
+	atomic64_t dynamic_uiturbo;
+	struct list_head ui_entry;
+	u64 enqueue_time;
+	u64 dynamic_uiturbo_start;
+	raw_spinlock_t uiturbo_lock;
+	void *uiturbo_wo;
+	int uiturbo_wt;
+#endif
 
 #ifdef CONFIG_SMP
 	struct llist_node		wake_entry;
@@ -1732,7 +1765,12 @@ static inline bool is_percpu_thread(void)
 #define PFA_SPEC_SSB_FORCE_DISABLE	4	/* Speculative Store Bypass force disabled*/
 #define PFA_SPEC_IB_DISABLE		5	/* Indirect branch speculation restricted */
 #define PFA_SPEC_IB_FORCE_DISABLE	6	/* Indirect branch speculation permanently restricted */
-
+#define PFA_NO_FREEZE			7	//[TCT-ROM][PERF]Add by jingyuan.wei for freezer on 2019/09/05
+#ifdef CONFIG_TCT_IOLIMIT
+//[TCT-ROM]begin added by xizheng.mo for 9572106 blkio type on 20200716
+#define PFA_IN_PAGEFAULT	27
+//[TCT-ROM]End added by xizheng.mo for 9572106 blkio type on 20200716
+#endif
 #define TASK_PFA_TEST(name, func)					\
 	static inline bool task_##func(struct task_struct *p)		\
 	{ return test_bit(PFA_##name, &p->atomic_flags); }
@@ -1770,6 +1808,18 @@ TASK_PFA_CLEAR(SPEC_IB_DISABLE, spec_ib_disable)
 TASK_PFA_TEST(SPEC_IB_FORCE_DISABLE, spec_ib_force_disable)
 TASK_PFA_SET(SPEC_IB_FORCE_DISABLE, spec_ib_force_disable)
 
+//[TCT-ROM][PERF]Begin Modify by jingyuan.wei for freezer on 2019/09/05
+TASK_PFA_TEST(NO_FREEZE, no_freeze)
+TASK_PFA_SET(NO_FREEZE, no_freeze)
+TASK_PFA_CLEAR(NO_FREEZE, no_freeze)
+//[TCT-ROM][PERF]End Modify by jingyuan.wei for freezer on 2019/09/05
+#ifdef CONFIG_TCT_IOLIMIT
+//[TCT-ROM]begin added by xizheng.mo for 9572106 blkio type on 20200716
+TASK_PFA_TEST(IN_PAGEFAULT, in_pagefault)
+TASK_PFA_SET(IN_PAGEFAULT, in_pagefault)
+TASK_PFA_CLEAR(IN_PAGEFAULT, in_pagefault)
+//[TCT-ROM]End added by xizheng.mo for 9572106 blkio type on 20200716
+#endif
 static inline void
 current_restore_flags(unsigned long orig_flags, unsigned long flags)
 {

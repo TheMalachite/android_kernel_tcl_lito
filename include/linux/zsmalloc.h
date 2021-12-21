@@ -36,7 +36,9 @@ enum zs_mapmode {
 
 struct zs_pool_stats {
 	/* How many pages were migrated (freed) */
-	unsigned long pages_compacted;
+	atomic_long_t pages_compacted;
+	/* How many objects were migrated (moved) */
+	atomic_long_t obj_migrated;
 };
 
 struct zs_pool;

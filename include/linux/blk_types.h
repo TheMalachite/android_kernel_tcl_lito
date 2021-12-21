@@ -337,8 +337,11 @@ enum req_flag_bits {
 	__REQ_RAHEAD,		/* read ahead, can fail anytime */
 	__REQ_BACKGROUND,	/* background IO */
 	__REQ_NOWAIT,           /* Don't wait if request will block */
-
-	__REQ_SORTED = __REQ_RAHEAD, /* elevator knows about this request */
+#ifdef CONFIG_TCT_UI_TURBO
+	__REQ_UI,
+	__REQ_FG,
+#endif
+	__REQ_SORTED, /* elevator knows about this request */
 	__REQ_URGENT,		/* urgent request */
 	/* command specific flags for REQ_OP_WRITE_ZEROES: */
 	__REQ_NOUNMAP,		/* do not free blocks when zeroing */
@@ -364,6 +367,10 @@ enum req_flag_bits {
 #define REQ_RAHEAD		(1ULL << __REQ_RAHEAD)
 #define REQ_BACKGROUND		(1ULL << __REQ_BACKGROUND)
 #define REQ_NOWAIT		(1ULL << __REQ_NOWAIT)
+#ifdef CONFIG_TCT_UI_TURBO
+#define REQ_UI			(1ULL << __REQ_UI)
+#define REQ_FG			(1ULL << __REQ_FG)
+#endif
 
 #define REQ_NOUNMAP		(1ULL << __REQ_NOUNMAP)
 
@@ -388,6 +395,14 @@ enum stat_group {
 	((bio)->bi_opf & REQ_OP_MASK)
 #define req_op(req) \
 	((req)->cmd_flags & REQ_OP_MASK)
+#ifdef CONFIG_TCT_UI_TURBO
+#define req_is_ui(req) \
+	((req)->cmd_flags & REQ_UI)
+#define req_is_fg(req) \
+    ((req)->cmd_flags & REQ_FG)
+#define req_is_read(req) \
+    (req_op(req) == REQ_OP_READ)
+#endif
 
 /* obsolete, don't use in new code */
 static inline void bio_set_op_attrs(struct bio *bio, unsigned op,
