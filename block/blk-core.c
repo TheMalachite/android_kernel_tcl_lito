@@ -3131,8 +3131,6 @@ bool blk_update_request(struct request *req, blk_status_t error,
 		if (bio_bytes == bio->bi_iter.bi_size)
 			req->bio = bio->bi_next;
 
-		/* Completion has already been traced */
-		bio_clear_flag(bio, BIO_TRACE_COMPLETION);
 		req_bio_endio(req, bio, bio_bytes, error);
 
 		total_bytes += bio_bytes;

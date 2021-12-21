@@ -329,6 +329,12 @@ struct cfq_io_cq {
  */
 struct cfq_data {
 	struct request_queue *queue;
+#ifdef CONFIG_TCT_UI_TURBO
+	struct list_head ui_queue;
+	int ui_dispatched;
+	int ui_inflight;
+	int ui_quantum;
+#endif
 	/* Root service tree for cfq_groups */
 	struct cfq_rb_root grp_service_tree;
 	struct cfq_group *root_group;
@@ -937,7 +943,11 @@ static inline struct cfq_data *cic_to_cfqd(struct cfq_io_cq *cic)
  */
 static inline void cfq_schedule_dispatch(struct cfq_data *cfqd)
 {
+#ifdef CONFIG_TCT_UI_TURBO
+	if (!list_empty(&cfqd->ui_queue) || cfqd->busy_queues) {
+#else
 	if (cfqd->busy_queues) {
+#endif
 		cfq_log(cfqd, "schedule dispatch");
 		kblockd_schedule_work(&cfqd->unplug_work);
 	}
@@ -2541,6 +2551,12 @@ static void cfq_activate_request(struct request_queue *q, struct request *rq)
 {
 	struct cfq_data *cfqd = q->elevator->elevator_data;
 
+#ifdef CONFIG_TCT_UI_TURBO
+	if (unlikely(req_is_ui(rq))) {
+		cfqd->ui_inflight++;
+		return ;
+	}
+#endif
 	cfqd->rq_in_driver++;
 	cfq_log_cfqq(cfqd, RQ_CFQQ(rq), "activate rq, drv=%d",
 						cfqd->rq_in_driver);
@@ -2551,6 +2567,13 @@ static void cfq_activate_request(struct request_queue *q, struct request *rq)
 static void cfq_deactivate_request(struct request_queue *q, struct request *rq)
 {
 	struct cfq_data *cfqd = q->elevator->elevator_data;
+
+#ifdef CONFIG_TCT_UI_TURBO
+	if (unlikely(req_is_ui(rq))) {
+		cfqd->ui_inflight--;
+		return ;
+	}
+#endif
 
 	WARN_ON(!cfqd->rq_in_driver);
 	cfqd->rq_in_driver--;
@@ -2648,6 +2671,11 @@ static int cfq_allow_bio_merge(struct request_queue *q, struct request *rq,
 	struct cfq_io_cq *cic;
 	struct cfq_queue *cfqq;
 
+#ifdef CONFIG_TCT_UI_TURBO
+	/* disable bio merge to ui request */
+	if (unlikely(req_is_ui(rq)))
+		return false;
+#endif
 	/*
 	 * Disallow merge of a sync bio into an async request.
 	 */
@@ -2669,6 +2697,10 @@ static int cfq_allow_bio_merge(struct request_queue *q, struct request *rq,
 static int cfq_allow_rq_merge(struct request_queue *q, struct request *rq,
 			      struct request *next)
 {
+#ifdef CONFIG_TCT_UI_TURBO
+	if (unlikely(req_is_ui(rq) || req_is_ui(next)))
+		return false;
+#endif
 	return RQ_CFQQ(rq) == RQ_CFQQ(next);
 }
 
@@ -3585,6 +3617,42 @@ static bool cfq_dispatch_request(struct cfq_data *cfqd, struct cfq_queue *cfqq)
 	return true;
 }
 
+#ifdef CONFIG_TCT_UI_TURBO
+#define UI_QUANTUM (2)
+static inline int cfq_dispatch_ui_requests(struct cfq_data *cfqd, int force)
+{
+	struct request *rq, *n;
+	int dispatched = 0;
+	if (list_empty(&cfqd->ui_queue)) {
+		cfqd->ui_dispatched = 0;
+		return 0;
+	}
+	if (cfqd->ui_dispatched >= cfqd->ui_quantum &&
+	    cfqd->busy_queues) {
+		cfqd->ui_dispatched = 0;
+		return 0;
+	}
+	if (likely(!force)) {
+		cfqd->ui_dispatched++;
+		rq = list_first_entry(&cfqd->ui_queue,
+				struct request, queuelist);
+		cfq_log(cfqd, "dispatch ui request");
+		list_del_init(&rq->queuelist);
+		elv_dispatch_sort(cfqd->queue, rq);
+		return 1;
+	}
+
+	list_for_each_entry_safe(rq, n, &cfqd->ui_queue, queuelist) {
+		list_del_init(&rq->queuelist);
+		elv_dispatch_sort(cfqd->queue, rq);
+		dispatched++;
+	}
+	if (!cfqd->busy_queues)
+		return dispatched;
+	return dispatched +  cfq_forced_dispatch(cfqd);
+}
+#endif
+
 /*
  * Find the cfqq that we need to service and move a request from that to the
  * dispatch list
@@ -3594,6 +3662,11 @@ static int cfq_dispatch_requests(struct request_queue *q, int force)
 	struct cfq_data *cfqd = q->elevator->elevator_data;
 	struct cfq_queue *cfqq;
 
+#ifdef CONFIG_TCT_UI_TURBO
+	int dispatched = cfq_dispatch_ui_requests(cfqd, force);
+	if (dispatched != 0)
+		return dispatched;
+#endif
 	if (!cfqd->busy_queues)
 		return 0;
 
@@ -4190,6 +4263,14 @@ static void cfq_insert_request(struct request_queue *q, struct request *rq)
 	struct cfq_data *cfqd = q->elevator->elevator_data;
 	struct cfq_queue *cfqq = RQ_CFQQ(rq);
 
+#ifdef CONFIG_TCT_UI_TURBO
+	if (unlikely(req_is_ui(rq))) {
+		rq->fifo_time = ktime_get_ns();
+		cfq_log(cfqd, "insert ui request");
+		list_add_tail(&rq->queuelist, &cfqd->ui_queue);
+		return __blk_run_queue(cfqd->queue);
+	}
+#endif
 	cfq_log_cfqq(cfqd, cfqq, "insert_request");
 	cfq_init_prio_data(cfqq, RQ_CIC(rq));
 
@@ -4279,9 +4360,17 @@ static bool cfq_should_wait_busy(struct cfq_data *cfqd, struct cfq_queue *cfqq)
 static void cfq_completed_request(struct request_queue *q, struct request *rq)
 {
 	struct cfq_queue *cfqq = RQ_CFQQ(rq);
-	struct cfq_data *cfqd = cfqq->cfqd;
+	struct cfq_data *cfqd = q->elevator->elevator_data;
 	const int sync = rq_is_sync(rq);
 	u64 now = ktime_get_ns();
+
+#ifdef CONFIG_TCT_UI_TURBO
+	if (unlikely(req_is_ui(rq))) {
+		cfq_log(cfqd, "complete ui request");
+		cfqd->ui_inflight--;
+		return ;
+	}
+#endif
 
 	cfq_log_cfqq(cfqd, cfqq, "complete rqnoidle %d", req_noidle(rq));
 
@@ -4397,6 +4486,11 @@ static int cfq_may_queue(struct request_queue *q, unsigned int op)
 	struct cfq_io_cq *cic;
 	struct cfq_queue *cfqq;
 
+#ifdef CONFIG_TCT_UI_TURBO
+	/* queue ui request even if queue congestion */
+	if (op & REQ_UI)
+		return ELV_MQUEUE_MUST;
+#endif
 	/*
 	 * don't force setup of a queue from here, as a call to may_queue
 	 * does not necessarily imply that a request actually will be queued.
@@ -4485,6 +4579,11 @@ cfq_set_request(struct request_queue *q, struct request *rq, struct bio *bio,
 	const bool is_sync = rq_is_sync(rq);
 	struct cfq_queue *cfqq;
 
+#ifdef CONFIG_TCT_UI_TURBO
+	if (unlikely(req_is_ui(rq))) {
+		return 0;
+	}
+#endif
 	spin_lock_irq(q->queue_lock);
 
 	check_ioprio_changed(cic, bio);
@@ -4646,6 +4745,10 @@ static int cfq_init_queue(struct request_queue *q, struct elevator_type *e)
 	eq->elevator_data = cfqd;
 
 	cfqd->queue = q;
+#ifdef CONFIG_TCT_UI_TURBO
+	INIT_LIST_HEAD(&cfqd->ui_queue);
+	cfqd->ui_quantum = UI_QUANTUM;
+#endif
 	spin_lock_irq(q->queue_lock);
 	q->elevator = eq;
 	spin_unlock_irq(q->queue_lock);
@@ -4778,6 +4881,9 @@ SHOW_FUNCTION(cfq_slice_async_show, cfqd->cfq_slice[0], 1);
 SHOW_FUNCTION(cfq_slice_async_rq_show, cfqd->cfq_slice_async_rq, 0);
 SHOW_FUNCTION(cfq_low_latency_show, cfqd->cfq_latency, 0);
 SHOW_FUNCTION(cfq_target_latency_show, cfqd->cfq_target_latency, 1);
+#ifdef CONFIG_TCT_UI_TURBO
+SHOW_FUNCTION(cfq_ui_quantum_show, cfqd->ui_quantum, 0);
+#endif
 #undef SHOW_FUNCTION
 
 #define USEC_SHOW_FUNCTION(__FUNC, __VAR)				\
@@ -4828,6 +4934,9 @@ STORE_FUNCTION(cfq_slice_async_rq_store, &cfqd->cfq_slice_async_rq, 1,
 		UINT_MAX, 0);
 STORE_FUNCTION(cfq_low_latency_store, &cfqd->cfq_latency, 0, 1, 0);
 STORE_FUNCTION(cfq_target_latency_store, &cfqd->cfq_target_latency, 1, UINT_MAX, 1);
+#ifdef CONFIG_TCT_UI_TURBO
+STORE_FUNCTION(cfq_ui_quantum_store, &cfqd->ui_quantum, 1, UINT_MAX, 0);
+#endif
 #undef STORE_FUNCTION
 
 #define USEC_STORE_FUNCTION(__FUNC, __PTR, MIN, MAX)			\
@@ -4872,6 +4981,9 @@ static struct elv_fs_entry cfq_attrs[] = {
 	CFQ_ATTR(low_latency),
 	CFQ_ATTR(target_latency),
 	CFQ_ATTR(target_latency_us),
+#ifdef CONFIG_TCT_UI_TURBO
+	CFQ_ATTR(ui_quantum),
+#endif
 	__ATTR_NULL
 };
 

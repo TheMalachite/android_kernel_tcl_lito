@@ -1472,7 +1472,31 @@ static ssize_t tg_set_conf_uint(struct kernfs_open_file *of,
 {
 	return tg_set_conf(of, buf, nbytes, off, false);
 }
+#ifdef CONFIG_TCT_IOLIMIT
+//[TCT-ROM]Begin added by xizheng.mo for 9572106 blkio type on 20200716
+static int tg_print_cgroup_type(struct seq_file *sf, void *v)
+{
+	struct blkcg *blkcg = css_to_blkcg(seq_css(sf));
 
+	seq_printf(sf, "type: %d\n", blkcg->type);
+
+	return 0;
+}
+
+static int tg_set_cgroup_type(struct cgroup_subsys_state *css,
+				struct cftype *cft, u64 val)
+{
+	struct blkcg *blkcg = css_to_blkcg(css);
+	unsigned int type = (unsigned int)val;
+
+	if (type >= BLK_THROTL_TYPE_NR)
+		return -EINVAL;
+
+	blkcg->type = type;
+	return 0;
+}
+//[TCT-ROM]End added by xizheng.mo for 9572106 blkio type on 20200716
+#endif
 static struct cftype throtl_legacy_files[] = {
 	{
 		.name = "throttle.read_bps_device",
@@ -1518,6 +1542,15 @@ static struct cftype throtl_legacy_files[] = {
 		.private = (unsigned long)&blkcg_policy_throtl,
 		.seq_show = blkg_print_stat_ios_recursive,
 	},
+#ifdef CONFIG_TCT_IOLIMIT
+//[TCT-ROM]Begin added by xizheng.mo for 9572106 blkio type on 20200716
+	{
+		.name = "throttle.type",
+		.seq_show = tg_print_cgroup_type,
+		.write_u64 = tg_set_cgroup_type,
+	},
+//[TCT-ROM]End added by xizheng.mo for 9572106 blkio type on 20200716
+#endif
 	{ }	/* terminate */
 };
 
