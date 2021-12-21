@@ -271,6 +271,10 @@ static int cam_ois_i2c_driver_remove(struct i2c_client *client)
 
 	return 0;
 }
+/*[bug-fix]-mod-begin,by jinghuang@tcl.com,task 9220454 on 20200413*/
+/*add function ois r/w  */
+DEVICE_ATTR(ois_cali_data, 0664, ois_cali_data_show, ois_cali_data_store); 
+/*[bug-fix]-mod-end,by jinghuang@tcl.com,task 9220454 on 20200413*/
 
 static int32_t cam_ois_platform_driver_probe(
 	struct platform_device *pdev)
@@ -318,6 +322,11 @@ static int32_t cam_ois_platform_driver_probe(
 	rc = cam_ois_init_subdev_param(o_ctrl);
 	if (rc)
 		goto free_soc;
+/*[bug-fix]-mod-begin,by jinghuang@tcl.com,task 9220454 on 20200413*/
+/*add function ois r/w  */
+        rc = device_create_file(&pdev->dev, &dev_attr_ois_cali_data);
+        CAM_ERR(CAM_OIS, "creat ois calibration data sys node rc=%d", rc);
+/*[bug-fix]-mod-end,by jinghuang@tcl.com,task 9220454 on 20200413*/
 
 	rc = cam_ois_update_i2c_info(o_ctrl, &soc_private->i2c_info);
 	if (rc) {
@@ -355,6 +364,11 @@ static int cam_ois_platform_driver_remove(struct platform_device *pdev)
 		CAM_ERR(CAM_OIS, "ois device is NULL");
 		return -EINVAL;
 	}
+/*[bug-fix]-mod-begin,by jinghuang@tcl.com,task 9220454 on 20200413*/
+/*add function ois r/w	*/
+    device_remove_file(&pdev->dev, &dev_attr_ois_cali_data);
+    CAM_ERR(CAM_OIS, "remove calibration node");
+/*[bug-fix]-mod-end,by jinghuang@tcl.com,task 9220454 on 20200413*/
 
 	CAM_INFO(CAM_OIS, "platform driver remove invoked");
 	soc_info = &o_ctrl->soc_info;

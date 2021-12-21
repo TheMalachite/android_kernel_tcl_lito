@@ -118,6 +118,7 @@ struct dsi_backlight_config {
 	u32 bl_min_level;
 	u32 bl_max_level;
 	u32 brightness_max_level;
+	u32 brightness_default_level; // MODIFIED by hongwei.tian, 2020-05-21,BUG-9435732
 	u32 bl_level;
 	u32 bl_scale;
 	u32 bl_scale_sv;
@@ -149,12 +150,23 @@ struct dsi_panel_reset_config {
 	u32 mode_sel_state;
 };
 
+#if defined(CONFIG_PXLW_IRIS3)
+struct dsi_iris_reset_config {
+	int iris_ext_clk_gpio;
+	int iris_vdd_gpio;
+	int iris_rst_gpio;
+	int abyp_gpio;
+};
+#endif
 enum esd_check_status_mode {
 	ESD_MODE_REG_READ,
 	ESD_MODE_SW_BTA,
 	ESD_MODE_PANEL_TE,
 	ESD_MODE_SW_SIM_SUCCESS,
 	ESD_MODE_SW_SIM_FAILURE,
+#ifdef CONFIG_TOUCHSCREEN_FTS
+	ESD_MODE_I2C_REG_READ,
+#endif
 	ESD_MODE_MAX
 };
 
@@ -170,6 +182,15 @@ struct drm_panel_esd_config {
 	u8 *status_buf;
 	u32 groups;
 };
+
+/* MODIFIED-BEGIN by hongwei.tian, 2019-05-23,BUG-7804622*/
+struct drm_panel_otp_config {
+	bool otp_enabled;
+	struct dsi_panel_cmd_set otp_cmd;
+	u32 *status_cmds_rlen;
+	u8 *status_buf;
+};
+/* MODIFIED-END by hongwei.tian,BUG-7804622*/
 
 struct dsi_panel {
 	const char *name;
@@ -202,6 +223,7 @@ struct dsi_panel {
 	struct dsi_pinctrl_info pinctrl;
 	struct drm_panel_hdr_properties hdr_props;
 	struct drm_panel_esd_config esd_config;
+	struct drm_panel_otp_config otp_config; // MODIFIED by hongwei.tian, 2019-05-23,BUG-7804622
 
 	struct dsi_parser_utils utils;
 
@@ -224,6 +246,24 @@ struct dsi_panel {
 	int panel_test_gpio;
 	int power_mode;
 	enum dsi_panel_physical_type panel_type;
+#if defined(CONFIG_PXLW_IRIS3)
+	struct dsi_iris_reset_config iris_reset_config;
+	struct clk *iris3_clk;
+#endif
+#if defined CONFIG_TCT_LITO_OTTAWA || defined CONFIG_TCT_LITO_CHICAGO
+	bool hbm_enabled;
+	u16 hbm_dimming_level;
+#endif
+#if defined(CONFIG_PXLW_IRIS6)
+	struct clk *iris_clk;
+	uint64_t lp;
+#endif
+#ifdef CONFIG_TCT_PROJECT_IRVINE
+	bool hbm_enabled;
+#endif
+#ifdef CONFIG_TCT_LITO_SEATTLE
+	bool panel_power_state;
+#endif
 };
 
 static inline bool dsi_panel_ulps_feature_enabled(struct dsi_panel *panel)
@@ -344,4 +384,7 @@ void dsi_panel_ext_bridge_put(struct dsi_panel *panel);
 void dsi_panel_calc_dsi_transfer_time(struct dsi_host_common_cfg *config,
 		struct dsi_display_mode *mode, u32 frame_threshold_us);
 
+#if defined(CONFIG_PXLW_IRIS3)
+int dsi_iris_vdd_on(struct dsi_panel *panel);
+#endif
 #endif /* _DSI_PANEL_H_ */

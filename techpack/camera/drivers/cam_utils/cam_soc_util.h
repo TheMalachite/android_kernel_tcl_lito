@@ -29,8 +29,10 @@
 /* maximum number of device base */
 #define CAM_SOC_MAX_BASE            CAM_SOC_MAX_BLOCK
 
+/*Begin jiwu.haung for [Task][10012816] modify max support regulator on 20200925*/
 /* maximum number of device regulator */
-#define CAM_SOC_MAX_REGULATOR       5
+#define CAM_SOC_MAX_REGULATOR       10
+/*End   jiwu.haung for [Task][10012816] modify max support regulator on 20200925*/
 
 /* maximum number of device clock */
 #define CAM_SOC_MAX_CLK             32

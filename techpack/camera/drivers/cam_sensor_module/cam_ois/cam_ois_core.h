@@ -30,5 +30,12 @@ int cam_ois_driver_cmd(struct cam_ois_ctrl_t *e_ctrl, void *arg);
  */
 void cam_ois_shutdown(struct cam_ois_ctrl_t *o_ctrl);
 
+/*[bug-fix]-mod-begin,by jinghuang@tcl.com,task 9220454 on 20200413*/
+/*add function ois r/w  */
+ssize_t ois_cali_data_show(struct device *dev, struct device_attribute *attr, char *buf);
+ssize_t ois_cali_data_store(struct device *dev,  struct device_attribute *attr, const char *buf, size_t count);
+/*[bug-fix]-mod-end,by jinghuang@tcl.com,task 9220454 on 20200413*/
+
+
 #endif
 /* _CAM_OIS_CORE_H_ */

@@ -47,6 +47,9 @@
 #include "msm_mmu.h"
 #include "sde_wb.h"
 #include "sde_dbg.h"
+#if defined(CONFIG_PXLW_IRIS6) || defined(PXLW_IRIS6)
+#include "dsi/iris/dsi_iris6_api.h"
+#endif
 
 /*
  * MSM driver version:
@@ -1556,6 +1559,54 @@ int msm_ioctl_rmfb2(struct drm_device *dev, void *data,
 }
 EXPORT_SYMBOL(msm_ioctl_rmfb2);
 
+/* MODIFIED-BEGIN by Haojun Chen, 2019-05-11,BUG-7765094*/
+#if defined(CONFIG_PXLW_IRIS3)
+static int msm_ioctl_iris_operate_conf(struct drm_device *dev, void *data,
+                                   struct drm_file *file)
+{
+       int ret = -EINVAL;
+       struct msm_drm_private *priv = dev->dev_private;
+       struct msm_kms *kms = priv->kms;
+
+       ret = kms->funcs->iris3_operate(kms, DRM_MSM_IRIS_OPERATE_CONF, data);
+       return ret;
+}
+
+static int msm_ioctl_iris_operate_tool(struct drm_device *dev, void *data,
+                                   struct drm_file *file)
+{
+       int ret = -EINVAL;
+       struct msm_drm_private *priv = dev->dev_private;
+       struct msm_kms *kms = priv->kms;
+
+       ret = kms->funcs->iris3_operate(kms, DRM_MSM_IRIS_OPERATE_TOOL, data);
+       return ret;
+}
+#elif defined(CONFIG_PXLW_IRIS6)
+static int msm_ioctl_iris_operate_conf(struct drm_device *dev, void *data,
+				    struct drm_file *file)
+{
+	int ret = -EINVAL;
+	struct msm_drm_private *priv = dev->dev_private;
+	struct msm_kms *kms = priv->kms;
+
+	ret = kms->funcs->iris_operate(kms, DRM_MSM_IRIS_OPERATE_CONF, data);
+	return ret;
+}
+
+static int msm_ioctl_iris_operate_tool(struct drm_device *dev, void *data,
+				    struct drm_file *file)
+{
+	int ret = -EINVAL;
+	struct msm_drm_private *priv = dev->dev_private;
+	struct msm_kms *kms = priv->kms;
+
+	ret = kms->funcs->iris_operate(kms, DRM_MSM_IRIS_OPERATE_TOOL, data);
+	return ret;
+}
+#endif // CONFIG_PXLW_IRIS3
+/* MODIFIED-END by Haojun Chen,BUG-7765094*/
+
 /**
  * msm_ioctl_power_ctrl - enable/disable power vote on MDSS Hw
  * @dev: drm device for the ioctl
@@ -1636,6 +1687,15 @@ static const struct drm_ioctl_desc msm_ioctls[] = {
 	DRM_IOCTL_DEF_DRV(MSM_RMFB2, msm_ioctl_rmfb2, DRM_UNLOCKED),
 	DRM_IOCTL_DEF_DRV(MSM_POWER_CTRL, msm_ioctl_power_ctrl,
 			DRM_RENDER_ALLOW),
+/* MODIFIED-BEGIN by Haojun Chen, 2019-05-11,BUG-7765094*/
+#if defined(CONFIG_PXLW_IRIS3)
+       DRM_IOCTL_DEF_DRV(MSM_IRIS_OPERATE_CONF, msm_ioctl_iris_operate_conf, DRM_UNLOCKED),
+       DRM_IOCTL_DEF_DRV(MSM_IRIS_OPERATE_TOOL, msm_ioctl_iris_operate_tool, DRM_UNLOCKED),
+#elif defined(CONFIG_PXLW_IRIS6)
+	DRM_IOCTL_DEF_DRV(MSM_IRIS_OPERATE_CONF, msm_ioctl_iris_operate_conf, DRM_UNLOCKED|DRM_RENDER_ALLOW),
+	DRM_IOCTL_DEF_DRV(MSM_IRIS_OPERATE_TOOL, msm_ioctl_iris_operate_tool, DRM_UNLOCKED|DRM_RENDER_ALLOW),
+#endif
+/* MODIFIED-END by Haojun Chen,BUG-7765094*/
 };
 
 static const struct vm_operations_struct vm_ops = {

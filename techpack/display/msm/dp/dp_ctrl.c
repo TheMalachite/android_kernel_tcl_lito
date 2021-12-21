@@ -1273,6 +1273,9 @@ static void dp_ctrl_stream_off(struct dp_ctrl *dp_ctrl, struct dp_panel *panel)
 	dp_ctrl_disable_stream_clocks(ctrl, panel);
 	ctrl->stream_count--;
 }
+#ifdef CONFIG_PTN36502_I2C
+extern void ptn_lane_switch(int lane, int bwcode);
+#endif
 
 static int dp_ctrl_on(struct dp_ctrl *dp_ctrl, bool mst_mode,
 		bool fec_mode, bool dsc_mode, bool shallow)
@@ -1320,7 +1323,9 @@ static int dp_ctrl_on(struct dp_ctrl *dp_ctrl, bool mst_mode,
 	/* backup initial lane count and bw code */
 	ctrl->initial_lane_count = ctrl->link->link_params.lane_count;
 	ctrl->initial_bw_code = ctrl->link->link_params.bw_code;
-
+#ifdef CONFIG_PTN36502_I2C
+	ptn_lane_switch(ctrl->link->link_params.lane_count, ctrl->link->link_params.bw_code);
+#endif
 	rc = dp_ctrl_link_setup(ctrl, shallow);
 	if (!rc)
 		ctrl->power_on = true;

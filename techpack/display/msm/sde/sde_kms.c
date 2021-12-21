@@ -57,6 +57,14 @@
 #define CREATE_TRACE_POINTS
 #include "sde_trace.h"
 
+/* MODIFIED-BEGIN by Haojun Chen, 2019-05-11,BUG-7765094*/
+#if defined(CONFIG_PXLW_IRIS3)
+#include "dsi_iris3_api.h"
+#elif defined(CONFIG_PXLW_IRIS6)
+#include "iris/dsi_iris6_api.h"
+#endif
+/* MODIFIED-END by Haojun Chen,BUG-7765094*/
+
 /* defines for secure channel call */
 #define MEM_PROTECT_SD_CTRL_SWITCH 0x18
 #define MDP_DEVICE_ID            0x1A
@@ -3093,6 +3101,41 @@ end:
 	return 0;
 }
 
+/* MODIFIED-BEGIN by Haojun Chen, 2019-05-11,BUG-7765094*/
+#if defined(CONFIG_PXLW_IRIS3)
+static int sde_kms_iris3_operate(struct msm_kms *kms,
+		u32 operate_type, struct msm_iris_operate_value *operate_value)
+{
+	int ret = -EINVAL;
+	struct sde_kms *sde_kms = NULL;
+
+	sde_kms = to_sde_kms(kms);
+
+	if (operate_type == DRM_MSM_IRIS_OPERATE_CONF) {
+		ret = iris3_operate_conf(operate_value);
+	} else if (operate_type == DRM_MSM_IRIS_OPERATE_TOOL) {
+		ret = iris3_operate_tool(operate_value);
+	}
+
+	return ret;
+}
+#elif defined(CONFIG_PXLW_IRIS6)
+static int sde_kms_iris_operate(struct msm_kms *kms,
+		u32 operate_type, struct msm_iris_operate_value *operate_value)
+{
+	int ret = -EINVAL;
+
+	if (operate_type == DRM_MSM_IRIS_OPERATE_CONF) {
+		ret = iris_operate_conf(operate_value);
+	} else if (operate_type == DRM_MSM_IRIS_OPERATE_TOOL) {
+		ret = iris_operate_tool(operate_value);
+	}
+
+	return ret;
+}
+#endif // CONFIG_PXLW_IRIS3
+/* MODIFIED-END by Haojun Chen,BUG-7765094*/
+
 static const struct msm_kms_funcs kms_funcs = {
 	.hw_init         = sde_kms_hw_init,
 	.postinit        = sde_kms_postinit,
@@ -3124,6 +3167,13 @@ static const struct msm_kms_funcs kms_funcs = {
 	.postopen = _sde_kms_post_open,
 	.check_for_splash = sde_kms_check_for_splash,
 	.get_mixer_count = sde_kms_get_mixer_count,
+/* MODIFIED-BEGIN by Haojun Chen, 2019-05-11,BUG-7765094*/
+#if defined(CONFIG_PXLW_IRIS3)
+	.iris3_operate = sde_kms_iris3_operate,
+#elif defined(CONFIG_PXLW_IRIS6)
+	.iris_operate = sde_kms_iris_operate,
+#endif
+/* MODIFIED-END by Haojun Chen,BUG-7765094*/
 };
 
 /* the caller api needs to turn on clock before calling it */

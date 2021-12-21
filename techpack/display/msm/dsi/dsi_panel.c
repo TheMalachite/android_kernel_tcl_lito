@@ -2,6 +2,10 @@
 /*
  * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
  */
+#define DEBUG // MODIFIED by hongwei.tian, 2019-08-26,BUG-8279237
+#define pr_fmt(fmt)	"msm-dsi-panel:[%s:%d] " fmt, __func__, __LINE__
+
+//#define DEBUG // MODIFIED by hongwei.tian, 2019-08-26,BUG-8279237
 
 #include <linux/delay.h>
 #include <linux/slab.h>
@@ -13,7 +17,20 @@
 #include "dsi_panel.h"
 #include "dsi_ctrl_hw.h"
 #include "dsi_parser.h"
+/* MODIFIED-BEGIN by Haojun Chen, 2019-05-11,BUG-7765094*/
+#if defined(CONFIG_PXLW_IRIS3)
+#include "dsi_iris3_api.h"
+#elif defined(CONFIG_PXLW_IRIS6)
+#include "iris/dsi_iris6_api.h"
+#endif
+/* MODIFIED-END by Haojun Chen,BUG-7765094*/
 #include "sde_dbg.h"
+
+//begin add by xiongbo.huang for irvine load tp firmware on 20200828
+#ifdef CONFIG_TCT_PROJECT_IRVINE
+extern void (*tct_tp_reset)(int status);
+#endif
+//end add by xiongbo.huang for irvine load tp firmware on 20200829
 
 /**
  * topology is currently defined by a set of following 3 values:
@@ -32,6 +49,11 @@
 #define MAX_PANEL_JITTER		10
 #define DEFAULT_PANEL_PREFILL_LINES	25
 #define MIN_PREFILL_LINES      35
+/* MODIFIED-BEGIN by jin.wang, 2020-04-07,BUG-9172506*/
+#if defined(CONFIG_TCT_PM7250_COMMON)
+bool g_lcd_on = true;
+#endif
+/* MODIFIED-END by jin.wang,BUG-9172506*/
 
 enum dsi_dsc_ratio_type {
 	DSC_8BPC_8BPP,
@@ -247,6 +269,58 @@ static int dsi_panel_vreg_put(struct dsi_panel *panel)
 	return rc;
 }
 
+#if defined(CONFIG_PXLW_IRIS3) || defined(CONFIG_PXLW_IRIS5)
+static int dsi_iris_gpio_request(struct dsi_panel *panel)
+{
+	int rc = 0;
+	struct dsi_iris_reset_config *r_config = &panel->iris_reset_config;
+
+	if (gpio_is_valid(r_config->iris_vdd_gpio)) {
+		rc = gpio_request(r_config->iris_vdd_gpio, "iris_vdd");
+		if (rc) {
+			pr_err("request for iris_vdd_gpio failed, rc=%d\n", rc);
+			goto error_release_vdd;
+		}
+	}
+
+	if (gpio_is_valid(r_config->iris_ext_clk_gpio)) {
+		rc = gpio_request(r_config->iris_ext_clk_gpio, "ext_clk");
+		if (rc) {
+			pr_err("request for iris_ext_clk_gpio failed, rc=%d\n", rc);
+			goto error_release_ext_clk;
+		}
+	}
+
+	if (gpio_is_valid(r_config->iris_rst_gpio)) {
+		rc = gpio_request(r_config->iris_rst_gpio, "iris_reset");
+		if (rc) {
+			pr_err("request for iris_rst_gpio failed, rc=%d\n", rc);
+			goto error_release_iris_rst;
+		}
+	}
+
+	if (gpio_is_valid(r_config->abyp_gpio)) {
+		rc = gpio_request(r_config->abyp_gpio, "analog_bypass");
+		if (rc) {
+			pr_err("request for abyp_gpio failed, rc=%d\n", rc);
+			goto error_release_abyp;
+		}
+	}
+
+error_release_abyp:
+	if (gpio_is_valid(r_config->iris_rst_gpio))
+		gpio_free(r_config->iris_rst_gpio);
+error_release_iris_rst:
+	if (gpio_is_valid(r_config->iris_ext_clk_gpio))
+		gpio_free(r_config->iris_ext_clk_gpio);
+error_release_ext_clk:
+	if (gpio_is_valid(r_config->iris_vdd_gpio))
+		gpio_free(r_config->iris_vdd_gpio);
+error_release_vdd:
+	return rc;
+}
+#endif
+
 static int dsi_panel_gpio_request(struct dsi_panel *panel)
 {
 	int rc = 0;
@@ -294,6 +368,15 @@ static int dsi_panel_gpio_request(struct dsi_panel *panel)
 		}
 	}
 
+#if defined(CONFIG_PXLW_IRIS3)
+	rc = dsi_iris_gpio_request(panel);
+	if (rc)
+		goto error_release_mode_sel;
+
+#elif defined(CONFIG_PXLW_IRIS6)
+	if (!strcmp(panel->type, "primary"))
+		iris_request_gpio();
+#endif
 	goto error;
 error_release_mode_sel:
 	if (gpio_is_valid(panel->bl_config.en_gpio))
@@ -307,6 +390,22 @@ error_release_reset:
 error:
 	return rc;
 }
+
+#if defined(CONFIG_PXLW_IRIS3)
+static void dsi_iris_gpio_release(struct dsi_panel *panel)
+{
+	struct dsi_iris_reset_config *r_config = &panel->iris_reset_config;
+
+	if (gpio_is_valid(r_config->abyp_gpio))
+		gpio_free(r_config->abyp_gpio);
+	if (gpio_is_valid(r_config->iris_rst_gpio))
+		gpio_free(r_config->iris_rst_gpio);
+	if (gpio_is_valid(r_config->iris_vdd_gpio))
+		gpio_free(r_config->iris_vdd_gpio);
+	if (gpio_is_valid(r_config->iris_ext_clk_gpio))
+		gpio_free(r_config->iris_ext_clk_gpio);
+}
+#endif
 
 static int dsi_panel_gpio_release(struct dsi_panel *panel)
 {
@@ -327,6 +426,9 @@ static int dsi_panel_gpio_release(struct dsi_panel *panel)
 
 	if (gpio_is_valid(panel->panel_test_gpio))
 		gpio_free(panel->panel_test_gpio);
+#if defined(CONFIG_PXLW_IRIS3)
+	dsi_iris_gpio_release(panel);
+#endif
 
 	return rc;
 }
@@ -355,6 +457,77 @@ int dsi_panel_trigger_esd_attack(struct dsi_panel *panel)
 	DSI_ERR("failed to pull down gpio\n");
 	return -EINVAL;
 }
+
+#if defined(CONFIG_PXLW_IRIS3)
+int dsi_iris_vdd_on(struct dsi_panel *panel)
+{
+	int rc = 0;
+	struct dsi_iris_reset_config *r_config = &panel->iris_reset_config;
+
+	pr_info(" vdd_gpio=gpio%d\n", r_config->iris_vdd_gpio);
+	if (gpio_is_valid(r_config->iris_vdd_gpio)) {
+		rc = gpio_direction_output(r_config->iris_vdd_gpio, 1);
+		if (rc) {
+			pr_err("unable to set dir for iris vdd gpio rc=%d\n", rc);
+		}
+	}
+	usleep_range(5*1000, 5*1000);
+	return rc;
+
+}
+
+static int dsi_iris_reset(struct dsi_panel *panel)
+{
+	int rc = 0;
+	struct dsi_iris_reset_config *r_config = &panel->iris_reset_config;
+
+	pr_info("!!!!!!!!\n");
+
+	if (panel->iris3_clk != NULL) {
+		rc = clk_prepare_enable(panel->iris3_clk);
+		if (rc) {
+			pr_err("Unable to enable iris3_clk\n");
+			goto exit;
+		} else {
+			usleep_range(5*1000, 5*1000);/*wait stable clock*/
+			pr_info("clk enabled external iris3_clk\n");
+		}
+	}
+
+	if (gpio_is_valid(r_config->iris_rst_gpio)) {
+		rc = gpio_direction_output(r_config->iris_rst_gpio, 0);
+		if (rc) {
+			pr_err("unable to set dir for iris reset gpio rc=%d\n", rc);
+			goto exit;
+		}
+		usleep_range(10*1000, 10*1000);
+		rc = gpio_direction_output(r_config->iris_rst_gpio, 1);
+		if (rc) {
+			pr_err("unable to set dir for iris reset gpio rc=%d\n", rc);
+			goto exit;
+		}
+		usleep_range(10*1000, 10*1000);
+	}
+exit:
+	return rc;
+}
+
+static void dsi_iris_power_off(struct dsi_panel *panel)
+{
+	struct dsi_iris_reset_config *r_config = &panel->iris_reset_config;
+
+	if (panel->iris3_clk != NULL) {
+		pr_info("disable iris3_clk\n");
+		clk_disable_unprepare(panel->iris3_clk);
+	}
+
+	if (gpio_is_valid(r_config->iris_rst_gpio))
+		gpio_set_value(r_config->iris_rst_gpio, 0);
+
+	if (gpio_is_valid(r_config->iris_vdd_gpio))
+		gpio_set_value(r_config->iris_vdd_gpio, 0);
+}
+#endif
 
 static int dsi_panel_reset(struct dsi_panel *panel)
 {
@@ -446,17 +619,27 @@ static int dsi_panel_set_pinctrl_state(struct dsi_panel *panel, bool enable)
 	return rc;
 }
 
+#ifdef CONFIG_TCT_LITO_SEATTLE
+u8 gesture_mode = 0;
+#endif
 
 static int dsi_panel_power_on(struct dsi_panel *panel)
 {
 	int rc = 0;
 
-	rc = dsi_pwr_enable_regulator(&panel->power_info, true);
-	if (rc) {
-		DSI_ERR("[%s] failed to enable vregs, rc=%d\n",
-				panel->name, rc);
-		goto exit;
+#ifdef CONFIG_TCT_LITO_SEATTLE
+	if (!panel->panel_power_state) {
+#endif
+		rc = dsi_pwr_enable_regulator(&panel->power_info, true);
+		if (rc) {
+			pr_err("[%s] failed to enable vregs, rc=%d\n", panel->name, rc);
+			goto exit;
+		}
+#ifdef CONFIG_TCT_LITO_SEATTLE
+		panel->panel_power_state = true;
+		/* MODIFIED-END by hongwei.tian,BUG-8279237*/
 	}
+#endif
 
 	rc = dsi_panel_set_pinctrl_state(panel, true);
 	if (rc) {
@@ -464,15 +647,36 @@ static int dsi_panel_power_on(struct dsi_panel *panel)
 		goto error_disable_vregs;
 	}
 
+//begin add by xiongbo.huang for Irvine tp load firmware on 20200829
+#ifdef CONFIG_TCT_PROJECT_IRVINE
+    if(tct_tp_reset != NULL){
+        tct_tp_reset(1);
+    }else{
+        DSI_ERR("[HXB] tct_tp_reset is NULL\n");
+    }
+#endif
+//end add by xiongbo.huang for Irvine tp load firmware on 20200829
+
+#if defined(CONFIG_PXLW_IRIS3)
+	rc = dsi_iris_reset(panel);
+	if (rc) {
+		pr_err("[%s] failed to reset iris, rc=%d\n", panel->name, rc);
+		goto error_disable_gpio;
+	}
+#endif
+
+#if !defined CONFIG_TCT_LITO_OTTAWA && !defined CONFIG_TCT_LITO_CHICAGO
 	rc = dsi_panel_reset(panel);
 	if (rc) {
 		DSI_ERR("[%s] failed to reset panel, rc=%d\n", panel->name, rc);
 		goto error_disable_gpio;
 	}
+#endif
 
 	goto exit;
-
+#if !defined CONFIG_TCT_LITO_OTTAWA && !defined CONFIG_TCT_LITO_CHICAGO
 error_disable_gpio:
+#endif
 	if (gpio_is_valid(panel->reset_config.disp_en_gpio))
 		gpio_set_value(panel->reset_config.disp_en_gpio, 0);
 
@@ -495,9 +699,34 @@ static int dsi_panel_power_off(struct dsi_panel *panel)
 	if (gpio_is_valid(panel->reset_config.disp_en_gpio))
 		gpio_set_value(panel->reset_config.disp_en_gpio, 0);
 
+#if !defined CONFIG_TCT_LITO_OTTAWA && !defined CONFIG_TCT_LITO_CHICAGO
 	if (gpio_is_valid(panel->reset_config.reset_gpio) &&
 					!panel->reset_gpio_always_on)
 		gpio_set_value(panel->reset_config.reset_gpio, 0);
+#endif
+
+//begin modified by xiongbo.huang for Irivne sleep current on 20200829
+#ifdef CONFIG_TCT_PROJECT_IRVINE
+	if (gpio_is_valid(panel->reset_config.reset_gpio) &&
+					!panel->reset_gpio_always_on){
+		gpio_set_value(panel->reset_config.reset_gpio, 0);
+		printk("hxb panel->reset_config.reset_gpio = %d\n",panel->reset_config.reset_gpio);
+        if(tct_tp_reset != NULL){
+            tct_tp_reset(0);
+        }else{
+            DSI_ERR("[HXB] tct_tp_reset is NULL\n");
+        }
+	}
+#endif
+//end add by xiongbo.huang for Irvine tp load firmware on 20200829
+
+
+#if defined(CONFIG_PXLW_IRIS3)
+	dsi_iris_power_off(panel);
+#elif defined(CONFIG_PXLW_IRIS6)
+	if (!strcmp(panel->type, "primary"))
+		iris_reset_off();
+#endif
 
 	if (gpio_is_valid(panel->reset_config.lcd_mode_sel_gpio))
 		gpio_set_value(panel->reset_config.lcd_mode_sel_gpio, 0);
@@ -515,10 +744,19 @@ static int dsi_panel_power_off(struct dsi_panel *panel)
 		       rc);
 	}
 
-	rc = dsi_pwr_enable_regulator(&panel->power_info, false);
-	if (rc)
-		DSI_ERR("[%s] failed to enable vregs, rc=%d\n",
+#ifdef CONFIG_TCT_LITO_SEATTLE
+	if (!gesture_mode) {
+#endif
+		usleep_range(3*1000, 3*1000);
+		rc = dsi_pwr_enable_regulator(&panel->power_info, false);
+		if (rc)
+			DSI_ERR("[%s] failed to enable vregs, rc=%d\n",
 				panel->name, rc);
+
+#ifdef CONFIG_TCT_LITO_SEATTLE
+		panel->panel_power_state = false;
+	}
+#endif
 
 	return rc;
 }
@@ -548,6 +786,15 @@ static int dsi_panel_tx_cmd_set(struct dsi_panel *panel,
 			 panel->name, type);
 		goto error;
 	}
+
+#if defined(CONFIG_PXLW_IRIS6)
+	if (!strcmp(panel->type, "primary")) {
+		if (iris_get_abyp_mode_blocking() == IRIS_PT_MODE) {
+			rc = iris_pt_send_panel_cmd(panel, &(mode->priv_info->cmd_sets[type]));
+			return rc;
+		}
+	}
+#endif
 
 	for (i = 0; i < count; i++) {
 		if (state == DSI_CMD_SET_STATE_LP)
@@ -650,10 +897,33 @@ static int dsi_panel_update_backlight(struct dsi_panel *panel,
 
 	dsi = &panel->mipi_device;
 
+#if defined CONFIG_TCT_LITO_OTTAWA || defined CONFIG_TCT_LITO_CHICAGO
+	if (panel->hbm_enabled || panel->hbm_dimming_level)
+		return 0;
+#endif
+
 	if (panel->bl_config.bl_inverted_dbv)
 		bl_lvl = (((bl_lvl & 0xff) << 8) | (bl_lvl >> 8));
 
+/* MODIFIED-BEGIN by Haojun Chen, 2019-05-11,BUG-7765094*/
+#if defined(CONFIG_PXLW_IRIS3) && !defined(IRIS3_ABYP_LIGHTUP)
+	rc = iris3_update_backlight(bl_lvl);
+#elif defined(CONFIG_PXLW_IRIS6)
+	if (!strcmp(panel->type, "primary")) {
+		if (!iris_dc_on_off_pending())
+			rc = iris_update_backlight(bl_lvl);
+	} else {
+#ifdef CONFIG_TCT_LITO_CHICAGO
+		rc = mipi_dsi_dcs_set_display_brightness_chicago(dsi, bl_lvl, 1);
+#else
+		rc = mipi_dsi_dcs_set_display_brightness(dsi, bl_lvl);
+#endif
+	}
+#else
 	rc = mipi_dsi_dcs_set_display_brightness(dsi, bl_lvl);
+#endif
+/* MODIFIED-END by Haojun Chen,BUG-7765094*/
+
 	if (rc < 0)
 		DSI_ERR("failed to update dcs backlight:%d\n", bl_lvl);
 
@@ -720,6 +990,10 @@ int dsi_panel_set_backlight(struct dsi_panel *panel, u32 bl_lvl)
 		return 0;
 
 	DSI_DEBUG("backlight type:%d lvl:%d\n", bl->type, bl_lvl);
+#ifdef CONFIG_TCT_PROJECT_IRVINE
+	if (panel->hbm_enabled && bl_lvl!=0)
+		return 0;
+#endif
 	switch (bl->type) {
 	case DSI_BACKLIGHT_WLED:
 		rc = backlight_device_set_brightness(bl->raw_bd, bl_lvl);
@@ -1807,6 +2081,12 @@ const char *cmd_set_prop_map[DSI_CMD_SET_MAX] = {
 	"qcom,mdss-dsi-post-mode-switch-on-command",
 	"qcom,mdss-dsi-qsync-on-commands",
 	"qcom,mdss-dsi-qsync-off-commands",
+/* MODIFIED-BEGIN by Haojun Chen, 2019-05-11,BUG-7765094*/
+#if defined(CONFIG_PXLW_IRIS3)
+	"iris,abyp-panel-command",
+#endif
+/* MODIFIED-END by Haojun Chen,BUG-7765094*/
+	"tct,panel-read-otp-command", // MODIFIED by hongwei.tian, 2019-05-23,BUG-7804622
 };
 
 const char *cmd_set_state_map[DSI_CMD_SET_MAX] = {
@@ -1833,6 +2113,12 @@ const char *cmd_set_state_map[DSI_CMD_SET_MAX] = {
 	"qcom,mdss-dsi-post-mode-switch-on-command-state",
 	"qcom,mdss-dsi-qsync-on-commands-state",
 	"qcom,mdss-dsi-qsync-off-commands-state",
+/* MODIFIED-BEGIN by Haojun Chen, 2019-05-11,BUG-7765094*/
+#if defined(CONFIG_PXLW_IRIS3)
+	"iris,abyp-panel-command-state",
+#endif
+/* MODIFIED-END by Haojun Chen,BUG-7765094*/
+	"tct,panel-read-otp-command-state", // MODIFIED by hongwei.tian, 2019-05-23,BUG-7804622
 };
 
 static int dsi_panel_get_cmd_pkt_count(const char *data, u32 length, u32 *cnt)
@@ -2206,6 +2492,32 @@ error:
 	return rc;
 }
 
+#if defined(CONFIG_PXLW_IRIS3)
+static void dsi_iris_parse_info(struct device *parent,
+				struct dsi_panel *panel,
+				struct device_node *of_node)
+{
+	struct dsi_iris_reset_config *r_config = &panel->iris_reset_config;
+
+	r_config->abyp_gpio = of_get_named_gpio(of_node,
+		"qcom,platform-analog-bypass-gpio", 0);
+	if (!gpio_is_valid(r_config->abyp_gpio))
+		pr_err("%s:%d abyp gpio not specified\n", __func__, __LINE__);
+	r_config->iris_rst_gpio = of_get_named_gpio(of_node,
+		"qcom,platform-iris-reset-gpio", 0);
+	if (!gpio_is_valid(r_config->iris_rst_gpio))
+		pr_err("%s:%d iris reset gpio not specified\n", __func__, __LINE__);
+	r_config->iris_vdd_gpio = of_get_named_gpio(of_node,
+		"qcom,platform-iris-vdd-gpio", 0);
+	if (!gpio_is_valid(r_config->iris_vdd_gpio))
+		pr_err("%s:%d iris vdd gpio not specified\n", __func__, __LINE__);
+	r_config->iris_ext_clk_gpio = of_get_named_gpio(of_node,
+		"qcom,platform-iris-ext-clk-gpio", 0);
+	if (!gpio_is_valid(r_config->iris_ext_clk_gpio))
+		pr_err("%s:%d iris ext clk gpio not specified\n", __func__, __LINE__);
+}
+#endif
+
 static int dsi_panel_parse_gpios(struct dsi_panel *panel)
 {
 	int rc = 0;
@@ -2382,6 +2694,18 @@ static int dsi_panel_parse_bl_config(struct dsi_panel *panel)
 	} else {
 		panel->bl_config.brightness_max_level = val;
 	}
+
+	/* MODIFIED-BEGIN by hongwei.tian, 2020-05-21,BUG-9435732*/
+	rc = utils->read_u32(utils->data, "qcom,mdss-brightness-default-level",
+		&val);
+	if (rc) {
+		DSI_DEBUG("[%s] brigheness-default-level unspecified, defaulting to 255\n",
+			 panel->name);
+		panel->bl_config.brightness_default_level = panel->bl_config.brightness_max_level;
+	} else {
+		panel->bl_config.brightness_default_level = val;
+	}
+	/* MODIFIED-END by hongwei.tian,BUG-9435732*/
 
 	panel->bl_config.bl_inverted_dbv = utils->read_bool(utils->data,
 		"qcom,mdss-dsi-bl-inverted-dbv");
@@ -3268,6 +3592,10 @@ static int dsi_panel_parse_esd_config(struct dsi_panel *panel)
 			esd_config->status_mode = ESD_MODE_SW_BTA;
 		} else if (!strcmp(string, "reg_read")) {
 			esd_config->status_mode = ESD_MODE_REG_READ;
+#ifdef CONFIG_TOUCHSCREEN_FTS
+		} else if (!strcmp(string, "i2c_reg_read")) {
+			esd_config->status_mode = ESD_MODE_I2C_REG_READ;
+#endif
 		} else if (!strcmp(string, "te_signal_check")) {
 			if (panel->panel_mode == DSI_OP_CMD_MODE) {
 				esd_config->status_mode = ESD_MODE_PANEL_TE;
@@ -3329,6 +3657,57 @@ static void dsi_panel_update_util(struct dsi_panel *panel,
 end:
 	utils->node = panel->panel_of_node;
 }
+
+/* MODIFIED-BEGIN by hongwei.tian, 2019-05-23,BUG-7804622*/
+static int dsi_panel_parse_otp_config(struct dsi_panel *panel)
+{
+	int rc = 0;
+	struct drm_panel_otp_config *otp_config;
+	struct dsi_parser_utils *utils = &panel->utils;
+
+	otp_config = &panel->otp_config;
+
+	if (!otp_config)
+		return -EINVAL;
+
+	dsi_panel_parse_cmd_sets_sub(&otp_config->otp_cmd,
+				DSI_CMD_SET_OTP_READ, utils);
+	if (!otp_config->otp_cmd.count) {
+		pr_err("panel otp command parsing failed\n");
+		rc = -EINVAL;
+		goto error;
+	}
+
+	if (!dsi_panel_parse_esd_status_len(utils,
+		"tct,panel-read-otp-length",
+			&panel->otp_config.status_cmds_rlen,
+				otp_config->otp_cmd.count)) {
+		pr_err("Invalid status read length\n");
+		rc = -EINVAL;
+		goto error1;
+	}
+
+	otp_config->status_buf = kzalloc(SZ_1K, GFP_KERNEL);
+	if (!otp_config->status_buf) {
+		rc = -ENOMEM;
+		goto error2;
+	}
+
+	pr_info("OTP read enabled with for debugfs\n");
+	otp_config->otp_enabled = true;
+
+	return 0;
+
+error2:
+	kfree(otp_config->status_cmds_rlen);
+error1:
+	kfree(otp_config->otp_cmd.cmds);
+error:
+	panel->otp_config.otp_enabled = false;
+	return rc;
+}
+/* MODIFIED-END by hongwei.tian,BUG-7804622*/
+
 
 struct dsi_panel *dsi_panel_get(struct device *parent,
 				struct device_node *of_node,
@@ -3438,6 +3817,14 @@ struct dsi_panel *dsi_panel_get(struct device *parent,
 		DSI_DEBUG("failed to parse esd config, rc=%d\n", rc);
 
 	panel->power_mode = SDE_MODE_DPMS_OFF;
+	/* MODIFIED-BEGIN by hongwei.tian, 2019-05-23,BUG-7804622*/
+	rc = dsi_panel_parse_otp_config(panel);
+	if (rc)
+		pr_debug("failed to parse otp config, rc=%d\n", rc);
+	/* MODIFIED-END by hongwei.tian,BUG-7804622*/
+#if defined(CONFIG_PXLW_IRIS3)
+	dsi_iris_parse_info(parent, panel, of_node);
+#endif
 	drm_panel_init(&panel->drm_panel);
 	panel->drm_panel.dev = &panel->mipi_device.dev;
 	panel->mipi_device.dev.of_node = of_node;
@@ -3517,6 +3904,10 @@ int dsi_panel_drv_init(struct dsi_panel *panel,
 			       panel->name, rc);
 		goto error_gpio_release;
 	}
+
+#ifdef CONFIG_TCT_LITO_SEATTLE
+	panel->panel_power_state = true;
+#endif
 
 	goto exit;
 
@@ -3970,6 +4361,11 @@ int dsi_panel_pre_prepare(struct dsi_panel *panel)
 
 	mutex_lock(&panel->panel_lock);
 
+#ifdef CONFIG_PXLW_IRIS6
+	if (!strcmp(panel->type, "primary"))
+		iris_vdd_enable(true);
+#endif
+
 	/* If LP11_INIT is set, panel will be powered up during prepare() */
 	if (panel->lp11_init)
 		goto error;
@@ -4010,7 +4406,26 @@ int dsi_panel_update_pps(struct dsi_panel *panel)
 		goto error;
 	}
 
+#if defined(CONFIG_PXLW_IRIS6)
+	// pr_info("qcom pps table:\n");
+	// print_hex_dump(KERN_INFO, "", DUMP_PREFIX_NONE, 16, 4,
+	// 	set->cmds->msg.tx_buf, set->cmds->msg.tx_len, false);
+#endif
+
+/* MODIFIED-BEGIN by Haojun Chen, 2019-05-11,BUG-7765094*/
+#if defined(CONFIG_PXLW_IRIS3)
+	pr_info("qcom pps table:\n");
+	print_hex_dump(KERN_INFO, "", DUMP_PREFIX_NONE, 16, 4,
+			set->cmds->msg.tx_buf, set->cmds->msg.tx_len, false);
+
+	if (iris3_abypass_mode_get() == PASS_THROUGH_MODE)
+		rc = iris3_panel_cmd_passthrough(panel, &(panel->cur_mode->priv_info->cmd_sets[DSI_CMD_SET_PPS]));
+	else
+		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_PPS);
+#else
 	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_PPS);
+#endif
+/* MODIFIED-END by Haojun Chen,BUG-7765094*/
 	if (rc) {
 		DSI_ERR("[%s] failed to send DSI_CMD_SET_PPS cmds, rc=%d\n",
 			panel->name, rc);
@@ -4031,7 +4446,9 @@ int dsi_panel_set_lp1(struct dsi_panel *panel)
 		return -EINVAL;
 	}
 
+#if !defined CONFIG_TCT_LITO_OTTAWA && !defined CONFIG_TCT_LITO_CHICAGO
 	mutex_lock(&panel->panel_lock);
+#endif
 	if (!panel->panel_initialized)
 		goto exit;
 
@@ -4046,12 +4463,22 @@ int dsi_panel_set_lp1(struct dsi_panel *panel)
 		panel->power_mode != SDE_MODE_DPMS_LP2)
 		dsi_pwr_panel_regulator_mode_set(&panel->power_info,
 			"ibb", REGULATOR_MODE_IDLE);
+
+#if defined(CONFIG_PXLW_IRIS3)
+	if (iris3_abypass_mode_get() == PASS_THROUGH_MODE)
+		rc = iris3_panel_cmd_passthrough(panel, &(panel->cur_mode->priv_info->cmd_sets[DSI_CMD_SET_LP1]));
+	else
+		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_LP1);
+#else
 	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_LP1);
+#endif
 	if (rc)
 		DSI_ERR("[%s] failed to send DSI_CMD_SET_LP1 cmd, rc=%d\n",
 		       panel->name, rc);
 exit:
+#if !defined CONFIG_TCT_LITO_OTTAWA && !defined CONFIG_TCT_LITO_CHICAGO
 	mutex_unlock(&panel->panel_lock);
+#endif
 	return rc;
 }
 
@@ -4064,16 +4491,27 @@ int dsi_panel_set_lp2(struct dsi_panel *panel)
 		return -EINVAL;
 	}
 
+#if !defined CONFIG_TCT_LITO_OTTAWA && !defined CONFIG_TCT_LITO_CHICAGO
 	mutex_lock(&panel->panel_lock);
+#endif
 	if (!panel->panel_initialized)
 		goto exit;
 
+#if defined(CONFIG_PXLW_IRIS3)
+	if (iris3_abypass_mode_get() == PASS_THROUGH_MODE)
+		rc = iris3_panel_cmd_passthrough(panel, &(panel->cur_mode->priv_info->cmd_sets[DSI_CMD_SET_LP2]));
+	else
+		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_LP2);
+#else
 	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_LP2);
+#endif
 	if (rc)
 		DSI_ERR("[%s] failed to send DSI_CMD_SET_LP2 cmd, rc=%d\n",
 		       panel->name, rc);
 exit:
+#if !defined CONFIG_TCT_LITO_OTTAWA && !defined CONFIG_TCT_LITO_CHICAGO
 	mutex_unlock(&panel->panel_lock);
+#endif
 	return rc;
 }
 
@@ -4086,7 +4524,9 @@ int dsi_panel_set_nolp(struct dsi_panel *panel)
 		return -EINVAL;
 	}
 
+#if !defined CONFIG_TCT_LITO_OTTAWA && !defined CONFIG_TCT_LITO_CHICAGO
 	mutex_lock(&panel->panel_lock);
+#endif
 	if (!panel->panel_initialized)
 		goto exit;
 
@@ -4098,12 +4538,24 @@ int dsi_panel_set_nolp(struct dsi_panel *panel)
 	     panel->power_mode == SDE_MODE_DPMS_LP2))
 		dsi_pwr_panel_regulator_mode_set(&panel->power_info,
 			"ibb", REGULATOR_MODE_NORMAL);
+
+/* MODIFIED-BEGIN by Haojun Chen, 2019-05-11,BUG-7765094*/
+#if defined(CONFIG_PXLW_IRIS3)
+	if (iris3_abypass_mode_get() == PASS_THROUGH_MODE)
+                rc = iris3_panel_cmd_passthrough(panel, &(panel->cur_mode->priv_info->cmd_sets[DSI_CMD_SET_NOLP]));
+        else
+                rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_NOLP);
+#else
 	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_NOLP);
+#endif
+/* MODIFIED-END by Haojun Chen,BUG-7765094*/
 	if (rc)
 		DSI_ERR("[%s] failed to send DSI_CMD_SET_NOLP cmd, rc=%d\n",
 		       panel->name, rc);
 exit:
+#if !defined CONFIG_TCT_LITO_OTTAWA && !defined CONFIG_TCT_LITO_CHICAGO
 	mutex_unlock(&panel->panel_lock);
+#endif
 	return rc;
 }
 
@@ -4126,8 +4578,26 @@ int dsi_panel_prepare(struct dsi_panel *panel)
 			goto error;
 		}
 	}
+#if defined(CONFIG_PXLW_IRIS6)
+	if (!strcmp(panel->type, "primary")) {
+		usleep_range(1*1000, 1*1000);
+		iris_clk_enable(true);
+		usleep_range(1*1000, 1*1000);
+		iris_reset();
+	}
+#endif
+#if defined CONFIG_TCT_LITO_OTTAWA || defined CONFIG_TCT_LITO_CHICAGO
+	dsi_panel_reset(panel);
+#endif
 
+#if defined(CONFIG_PXLW_IRIS3)
+	if (iris3_abypass_mode_get() == PASS_THROUGH_MODE)
+		rc = iris3_panel_cmd_passthrough(panel, &(panel->cur_mode->priv_info->cmd_sets[DSI_CMD_SET_PRE_ON]));
+	else
+		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_PRE_ON);
+#else
 	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_PRE_ON);
+#endif
 	if (rc) {
 		DSI_ERR("[%s] failed to send DSI_CMD_SET_PRE_ON cmds, rc=%d\n",
 		       panel->name, rc);
@@ -4229,7 +4699,14 @@ int dsi_panel_send_qsync_on_dcs(struct dsi_panel *panel,
 	mutex_lock(&panel->panel_lock);
 
 	DSI_DEBUG("ctrl:%d qsync on\n", ctrl_idx);
+#if defined(CONFIG_PXLW_IRIS3)
+	if (iris3_abypass_mode_get() == PASS_THROUGH_MODE)
+		rc = iris3_panel_cmd_passthrough(panel, &(panel->cur_mode->priv_info->cmd_sets[DSI_CMD_SET_QSYNC_ON]));
+	else
+		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_QSYNC_ON);
+#else
 	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_QSYNC_ON);
+#endif
 	if (rc)
 		DSI_ERR("[%s] failed to send DSI_CMD_SET_QSYNC_ON cmds rc=%d\n",
 		       panel->name, rc);
@@ -4251,7 +4728,14 @@ int dsi_panel_send_qsync_off_dcs(struct dsi_panel *panel,
 	mutex_lock(&panel->panel_lock);
 
 	DSI_DEBUG("ctrl:%d qsync off\n", ctrl_idx);
+#if defined(CONFIG_PXLW_IRIS3)
+	if (iris3_abypass_mode_get() == PASS_THROUGH_MODE)
+		rc = iris3_panel_cmd_passthrough(panel, &(panel->cur_mode->priv_info->cmd_sets[DSI_CMD_SET_QSYNC_OFF]));
+	else
+		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_QSYNC_OFF);
+#else
 	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_QSYNC_OFF);
+#endif
 	if (rc)
 		DSI_ERR("[%s] failed to send DSI_CMD_SET_QSYNC_OFF cmds rc=%d\n",
 		       panel->name, rc);
@@ -4287,7 +4771,16 @@ int dsi_panel_send_roi_dcs(struct dsi_panel *panel, int ctrl_idx,
 
 	mutex_lock(&panel->panel_lock);
 
+	/* MODIFIED-BEGIN by Haojun Chen, 2019-05-11,BUG-7765094*/
+#if defined(CONFIG_PXLW_IRIS3)
+	if (iris3_abypass_mode_get() == PASS_THROUGH_MODE)
+                rc = iris3_panel_cmd_passthrough(panel, &(panel->cur_mode->priv_info->cmd_sets[DSI_CMD_SET_ROI]));
+        else
+                rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_ROI);
+#else
 	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_ROI);
+#endif
+/* MODIFIED-END by Haojun Chen,BUG-7765094*/
 	if (rc)
 		DSI_ERR("[%s] failed to send DSI_CMD_SET_ROI cmds, rc=%d\n",
 				panel->name, rc);
@@ -4390,8 +4883,21 @@ int dsi_panel_switch(struct dsi_panel *panel)
 	}
 
 	mutex_lock(&panel->panel_lock);
-
+#if defined(CONFIG_PXLW_IRIS3)
+	if (iris3_abypass_mode_get() == PASS_THROUGH_MODE)
+		rc = iris3_panel_cmd_passthrough(panel, &(panel->cur_mode->priv_info->cmd_sets[DSI_CMD_SET_TIMING_SWITCH]));
+	else
+		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_TIMING_SWITCH);
+#elif defined(CONFIG_PXLW_IRIS6)
+	if (!strcmp(panel->type, "primary")) {
+		rc = iris_switch(panel,
+				&(panel->cur_mode->priv_info->cmd_sets[DSI_CMD_SET_TIMING_SWITCH]),
+				&panel->cur_mode->timing);
+	} else
+		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_TIMING_SWITCH);
+#else
 	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_TIMING_SWITCH);
+#endif
 	if (rc)
 		DSI_ERR("[%s] failed to send DSI_CMD_SET_TIMING_SWITCH cmds, rc=%d\n",
 		       panel->name, rc);
@@ -4411,7 +4917,14 @@ int dsi_panel_post_switch(struct dsi_panel *panel)
 
 	mutex_lock(&panel->panel_lock);
 
+#if defined(CONFIG_PXLW_IRIS3)
+	if (iris3_abypass_mode_get() == PASS_THROUGH_MODE)
+		rc = iris3_panel_cmd_passthrough(panel, &(panel->cur_mode->priv_info->cmd_sets[DSI_CMD_SET_POST_TIMING_SWITCH]));
+	else
+		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_POST_TIMING_SWITCH);
+#else
 	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_POST_TIMING_SWITCH);
+#endif
 	if (rc)
 		DSI_ERR("[%s] failed to send DSI_CMD_SET_POST_TIMING_SWITCH cmds, rc=%d\n",
 		       panel->name, rc);
@@ -4430,13 +4943,33 @@ int dsi_panel_enable(struct dsi_panel *panel)
 	}
 
 	mutex_lock(&panel->panel_lock);
-
+/* MODIFIED-BEGIN by Haojun Chen, 2019-05-11,BUG-7765094*/
+#if defined(CONFIG_PXLW_IRIS3)
+	rc = iris_panel_enable(panel,
+		&(panel->cur_mode->priv_info->cmd_sets[DSI_CMD_SET_ON]));
+#elif defined(CONFIG_PXLW_IRIS6)
+	if (!strcmp(panel->type, "primary"))
+		rc = iris_enable(panel, &(panel->cur_mode->priv_info->cmd_sets[DSI_CMD_SET_ON]));
+	else
+		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_ON);
+#else
 	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_ON);
+#endif
+/* MODIFIED-END by Haojun Chen,BUG-7765094*/
+
 	if (rc)
 		DSI_ERR("[%s] failed to send DSI_CMD_SET_ON cmds, rc=%d\n",
 		       panel->name, rc);
 	else
 		panel->panel_initialized = true;
+
+/* MODIFIED-BEGIN by jin.wang, 2020-04-07,BUG-9172506*/
+#if defined(CONFIG_TCT_PM7250_COMMON)
+	if (!strcmp(panel->type, "primary"))
+		g_lcd_on = panel->panel_initialized;
+#endif
+/* MODIFIED-END by jin.wang,BUG-9172506*/
+
 	mutex_unlock(&panel->panel_lock);
 	return rc;
 }
@@ -4452,7 +4985,16 @@ int dsi_panel_post_enable(struct dsi_panel *panel)
 
 	mutex_lock(&panel->panel_lock);
 
+/* MODIFIED-BEGIN by Haojun Chen, 2019-05-11,BUG-7765094*/
+#if defined(CONFIG_PXLW_IRIS3)
+	if (iris3_abypass_mode_get() == PASS_THROUGH_MODE)
+		rc = iris3_panel_cmd_passthrough(panel, &(panel->cur_mode->priv_info->cmd_sets[DSI_CMD_SET_POST_ON]));
+	else
+		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_POST_ON);
+#else
 	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_POST_ON);
+#endif
+/* MODIFIED-END by Haojun Chen,BUG-7765094*/
 	if (rc) {
 		DSI_ERR("[%s] failed to send DSI_CMD_SET_POST_ON cmds, rc=%d\n",
 		       panel->name, rc);
@@ -4474,12 +5016,23 @@ int dsi_panel_pre_disable(struct dsi_panel *panel)
 
 	mutex_lock(&panel->panel_lock);
 
+#if defined(CONFIG_PXLW_IRIS3)
+	if (iris3_abypass_mode_get() == PASS_THROUGH_MODE)
+		rc = iris3_lightoff(panel, DSI_CMD_SET_PRE_OFF);
+	else
+		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_PRE_OFF);
+#else
 	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_PRE_OFF);
+#endif
 	if (rc) {
 		DSI_ERR("[%s] failed to send DSI_CMD_SET_PRE_OFF cmds, rc=%d\n",
 		       panel->name, rc);
 		goto error;
 	}
+#if defined(CONFIG_PXLW_IRIS3)
+	if (!atomic_read(&panel->esd_recovery_pending))
+		iris3_lightoff_pre();
+#endif
 
 error:
 	mutex_unlock(&panel->panel_lock);
@@ -4508,7 +5061,22 @@ int dsi_panel_disable(struct dsi_panel *panel)
 			panel->power_mode == SDE_MODE_DPMS_LP2))
 			dsi_pwr_panel_regulator_mode_set(&panel->power_info,
 				"ibb", REGULATOR_MODE_STANDBY);
+
+/* MODIFIED-BEGIN by Haojun Chen, 2019-05-11,BUG-7765094*/
+#if defined(CONFIG_PXLW_IRIS3)
+		if (iris3_abypass_mode_get() == PASS_THROUGH_MODE)
+			rc = iris3_lightoff(panel, DSI_CMD_SET_OFF);
+		else
+			rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_OFF);
+#elif defined(CONFIG_PXLW_IRIS6)
+		if (!strcmp(panel->type, "primary"))
+			rc = iris_disable(panel, &(panel->cur_mode->priv_info->cmd_sets[DSI_CMD_SET_OFF]));
+		else
+			rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_OFF);
+#else
 		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_OFF);
+#endif
+/* MODIFIED-END by Haojun Chen,BUG-7765094*/
 		if (rc) {
 			/*
 			 * Sending panel off commands may fail when  DSI
@@ -4523,6 +5091,18 @@ int dsi_panel_disable(struct dsi_panel *panel)
 	}
 	panel->panel_initialized = false;
 	panel->power_mode = SDE_MODE_DPMS_OFF;
+
+/* MODIFIED-BEGIN by jin.wang, 2020-04-07,BUG-9172506*/
+#if defined(CONFIG_TCT_PM7250_COMMON)
+	if (!strcmp(panel->type, "primary"))
+		g_lcd_on = false;
+#endif
+/* MODIFIED-END by jin.wang,BUG-9172506*/
+
+#if defined CONFIG_TCT_LITO_OTTAWA || defined CONFIG_TCT_LITO_CHICAGO
+	panel->hbm_enabled = false;
+	panel->hbm_dimming_level = 0;
+#endif
 
 	mutex_unlock(&panel->panel_lock);
 	return rc;
@@ -4539,7 +5119,14 @@ int dsi_panel_unprepare(struct dsi_panel *panel)
 
 	mutex_lock(&panel->panel_lock);
 
+#if defined(CONFIG_PXLW_IRIS3)
+	if (iris3_abypass_mode_get() == PASS_THROUGH_MODE)
+		rc = iris3_panel_cmd_passthrough(panel, &(panel->cur_mode->priv_info->cmd_sets[DSI_CMD_SET_POST_OFF]));
+	else
+		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_POST_OFF);
+#else
 	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_POST_OFF);
+#endif
 	if (rc) {
 		DSI_ERR("[%s] failed to send DSI_CMD_SET_POST_OFF cmds, rc=%d\n",
 		       panel->name, rc);
@@ -4548,6 +5135,13 @@ int dsi_panel_unprepare(struct dsi_panel *panel)
 
 error:
 	mutex_unlock(&panel->panel_lock);
+
+#if defined CONFIG_TCT_LITO_OTTAWA || defined CONFIG_TCT_LITO_CHICAGO
+	if (gpio_is_valid(panel->reset_config.reset_gpio) &&
+					!panel->reset_gpio_always_on)
+		gpio_set_value(panel->reset_config.reset_gpio, 0);
+#endif
+
 	return rc;
 }
 

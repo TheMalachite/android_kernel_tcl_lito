@@ -60,6 +60,45 @@ static const struct drm_prop_enum_list e_qsync_mode[] = {
 	{SDE_RM_QSYNC_CONTINUOUS_MODE,	"continuous"},
 	{SDE_RM_QSYNC_ONE_SHOT_MODE,	"one_shot"},
 };
+/* MODIFIED-BEGIN by hongwei.tian, 2019-09-17,BUG-8346376*/
+#if defined(CONFIG_TCT_SMART_LCD_BACKLIGHT)
+static const int brightness_bsp[256] = {
+/*	0,	 14,   14,	 14,   14,	 14,   14,	 14,   14,	 14,   14,	 21,   21,	 21,   21,	 21,
+	31,   31,	31,   31,	31,   43,	43,   43,	43,   43,	55,   55,	55,   55,	55,   67,
+	67,   81,	81,   81,	97,   97,	97,   113,	 113,	113,   129,   129,	 145,	145,   145,   161,
+	161,   161,   177,	 177,	177,   193,   193,	 193,	198,   203,   208,	 213,	218,   223,   228,	 233,
+	238,   243,   248,	 253,	258,   263,   268,	 273,	278,   283,   288,	 293,	298,   303,   308,	 313,
+	318,   323,   328,	 333,	338,   343,   348,	 353,	358,   363,   368,	 373,	378,   384,   390,	 396,
+	402,   408,   414,	 420,	426,   432,   438,	 444,	451,   458,   465,	 472,	479,   486,   493,	 500,
+	507,   514,   522,	 530,	538,   546,   554,	 562,	570,   578,   586,	 594,	604,   614,   624,	 634,
+	644,   654,   664,	 674,	684,   694,   706,	 718,	730,   742,   754,	 766,	778,   790,   802,	 814,
+	828,   842,   856,	 870,	884,   898,   912,	 926,	940,   954,   970,	 986,	1002,	1018,	1034,	1050,
+	1066,	1082,	1098,	1114,	1132,	1150,	1168,	1186,	1204,	1222,	1240,	1258,	1276,	1294,	1314,	1334,
+	1354,	1374,	1394,	1414,	1434,	1454,	1474,	1494,	1517,	1540,	1563,	1586,	1609,	1632,	1655,	1678,
+	1701,	1724,	1750,	1776,	1802,	1828,	1854,	1883,	1912,	1941,	1970,	1999,	2032,	2065,	2098,	2131,
+	2164,	2197,	2234,	2271,	2308,	2345,	2382,	2419,	2459,	2499,	2539,	2579,	2619,	2659,	2699,	2739,
+	2779,	2819,	2859,	2899,	2939,	2981,	3023,	3065,	3107,	3149,	3191,	3233,	3275,	3317,	3359,	3401,
+	3443,	3485,	3527,	3569,	3611,	3655,	3699,	3743,	3787,	3831,	3875,	3919,	3963,	4007,	4051,	4095*/
+
+	0,	14,	15,	16,	17,	18,	19,	 20,   21,	 22,   23,	 24,   25,	 26,   27,	 28,
+	29,   30,	31,   32,	33,   35,	37,   39,	41,   43,	45,   47,	49,   51,	53,   56,
+	59,   62,	65,   68,	71,   74,	77,   80,	83,   87,	91,   95,	99,   103,	 107,	111,
+	115,   119,   123,	 128,	133,   138,   143,	 148,	153,   158,   163,	 168,	173,   178,   183,	 183,
+	193,   198,   203,	 208,	213,   218,   223,	 228,	233,   238,   243,	 248,	253,   258,   263,	 268,
+	273,   278,   283,	 288,	293,   298,   303,	 308,	313,   318,   323,	 328,	333,   338,   343,	 348,
+	353,   358,   363,	 368,	373,   378,   383,	 388,	393,   398,   403,	 408,	413,   418,   423,	 428,
+	433,   438,   443,	 448,	454,   460,   466,	 472,	478,   484,   490,	 496,	502,   508,   515,	 522,
+	529,   536,   543,	 550,	557,   564,   571,	 578,	586,   594,   602,	 610,	618,   626,   634,	 642,
+	650,   658,   668,	 678,	688,   698,   708,	 718,	728,   738,   748,	 758,	770,   782,   794,	 806,
+	818,	832,	846,	860,	874,	888,	904,	920,	936,	952,	968,	986,	1004,	1022,	1040,	1058,
+	1078,	1098,	1118,	1138,	1158,	1181,	1204,	1227,	1250,	1273,	1299,	1325,	1351,	1377,	1403,	1432,
+	1461,	1490,	1519,	1548,	1581,	1614,	1647,	1680,	1713,	1750,	1787,	1824,	1861,	1898,	1935,	1972,
+	2009,	2046,	2083,	2123,	2163,	2203,	2243,	2283,	2323,	2363,	2403,	2443,	2483,	2527,	2571,	2615,
+	2659,	2703,	2747,	2791,	2835,	2879,	2923,	2969,	3015,	3061,	3107,	3153,	3199,	3245,	3291,	3337,
+	3383,	3430,	3477,	3524,	3571,	3618,	3665,	3712,	3759,	3806,	3853,	3901,	3949,	3997,	4045,	4093
+};
+#endif
+/* MODIFIED-END by hongwei.tian,BUG-8346376*/
 static const struct drm_prop_enum_list e_frame_trigger_mode[] = {
 	{FRAME_DONE_WAIT_DEFAULT, "default"},
 	{FRAME_DONE_WAIT_SERIALIZE, "serialize_frame_trigger"},
@@ -74,6 +113,7 @@ static int sde_backlight_device_update_status(struct backlight_device *bd)
 	int bl_lvl;
 	struct drm_event event;
 	int rc = 0;
+	static int pre_brightness = 0; // MODIFIED by hongwei.tian, 2019-07-22,BUG-8131572
 
 	brightness = bd->props.brightness;
 
@@ -84,17 +124,74 @@ static int sde_backlight_device_update_status(struct backlight_device *bd)
 
 	c_conn = bl_get_data(bd);
 	display = (struct dsi_display *) c_conn->display;
+#if defined CONFIG_TCT_LITO_OTTAWA || defined CONFIG_TCT_LITO_CHICAGO
+	if (brightness > display->panel->bl_config.brightness_max_level)
+		brightness = display->panel->bl_config.brightness_max_level;
+#else
 	if (brightness > display->panel->bl_config.bl_max_level)
 		brightness = display->panel->bl_config.bl_max_level;
+#endif
 
 	/* map UI brightness into driver backlight level with rounding */
+/* MODIFIED-BEGIN by hongwei.tian, 2019-09-17,BUG-8346376*/
+#if defined(CONFIG_TCT_SMART_LCD_BACKLIGHT)
+	if(brightness < 0)
+		brightness = 0;
+	if(brightness>255)
+		brightness = 255;
+
+	bl_lvl = brightness_bsp[brightness];
+#elif defined CONFIG_TCT_LITO_OTTAWA || defined CONFIG_TCT_LITO_CHICAGO
+	if (!strcmp(display->display_type, "primary")) {
+		if (brightness <= 0)
+			bl_lvl = 0;
+		else if (brightness >= 1 && brightness <= 11)
+			bl_lvl = brightness;
+		else if (brightness > 11 && brightness <= 30)
+			bl_lvl = brightness/2 + 6;
+		else
+			bl_lvl = brightness*835/1000 - 4;
+
+		if (bl_lvl > display->panel->bl_config.bl_max_level)
+			bl_lvl = display->panel->bl_config.bl_max_level;
+
+		if ((display->panel->power_mode == SDE_MODE_DPMS_LP1) ||
+				(display->panel->power_mode == SDE_MODE_DPMS_LP2)) {
+			if (brightness == 1)
+				bl_lvl = 120;
+			else if (brightness == 2)
+				bl_lvl = 2047;
+		}
+	} else {
+		bl_lvl = mult_frac(brightness, display->panel->bl_config.bl_max_level,
+				display->panel->bl_config.brightness_max_level);
+	}
+//begin modified by xiongbo.huang for irvine backlight remap task 9800789 on 20200829
+#elif defined CONFIG_TCT_PROJECT_IRVINE
+	if (brightness == 0)
+		bl_lvl = 0;
+	else {
+		bl_lvl = brightness*2-6;
+		if (bl_lvl < 0)
+			bl_lvl = 1;
+	}
+//end modified by xiongbo.huang for irvine backlight remap task 9800789 on 20200829
+#else
 	bl_lvl = mult_frac(brightness, display->panel->bl_config.bl_max_level,
 			display->panel->bl_config.brightness_max_level);
+#endif
+	SDE_DEBUG("backlight [%s] bl_lvl = %d brightness = %d \n",__func__,bl_lvl,brightness);
 
 	if (!bl_lvl && brightness)
 		bl_lvl = 1;
 
-	if (!c_conn->allow_bl_update) {
+	if (pre_brightness == 0)
+		pr_info("brightness:%d, bl_lvl:%d , bl_update:%d, allow_bl_update:%d\n",
+			brightness, bl_lvl, display->panel->bl_config.bl_update, c_conn->allow_bl_update);
+	pre_brightness = brightness;
+	/* MODIFIED-END by hongwei.tian,BUG-8346376*/
+	if (display->panel->bl_config.bl_update ==
+		BL_UPDATE_DELAY_UNTIL_FIRST_FRAME && !c_conn->allow_bl_update) {
 		c_conn->unset_bl_level = bl_lvl;
 		return 0;
 	}
@@ -148,7 +245,7 @@ static int sde_backlight_setup(struct sde_connector *c_conn,
 	display = (struct dsi_display *) c_conn->display;
 	bl_config = &display->panel->bl_config;
 	props.max_brightness = bl_config->brightness_max_level;
-	props.brightness = bl_config->brightness_max_level;
+	props.brightness = bl_config->brightness_default_level; // MODIFIED by hongwei.tian, 2020-05-21,BUG-9435732
 	snprintf(bl_node_name, BL_NODE_NAME_SIZE, "panel%u-backlight",
 							display_count);
 	c_conn->bl_device = backlight_device_register(bl_node_name, dev->dev,

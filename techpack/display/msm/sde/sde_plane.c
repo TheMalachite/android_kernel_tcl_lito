@@ -36,6 +36,13 @@
 #include "sde_vbif.h"
 #include "sde_plane.h"
 #include "sde_color_processing.h"
+/* MODIFIED-BEGIN by Haojun Chen, 2019-05-11,BUG-7765094*/
+#if defined(CONFIG_PXLW_IRIS3)
+#include "dsi_iris3_api.h"
+#elif defined(CONFIG_PXLW_IRIS6)
+#include "iris/dsi_iris6_api.h"
+#endif
+/* MODIFIED-END by Haojun Chen,BUG-7765094*/
 
 #define SDE_DEBUG_PLANE(pl, fmt, ...) SDE_DEBUG("plane%d " fmt,\
 		(pl) ? (pl)->base.base.id : -1, ##__VA_ARGS__)
@@ -1115,6 +1122,70 @@ static inline void _sde_plane_setup_csc(struct sde_plane *psde)
 		{ 0x00, 0x3ff, 0x00, 0x3ff, 0x00, 0x3ff,},
 	};
 
+/* MODIFIED-BEGIN by Haojun Chen, 2019-05-11,BUG-7765094*/
+#if defined(CONFIG_PXLW_IRIS3)
+	static const struct sde_csc_cfg hdrYUV = {
+		{
+			0x00010000, 0x00000000, 0x00000000,
+			0x00000000, 0x00010000, 0x00000000,
+			0x00000000, 0x00000000, 0x00010000,
+		},
+		{ 0x0, 0x0, 0x0,},
+		{ 0x0, 0x0, 0x0,},
+		{ 0x0, 0x3ff, 0x0, 0x3ff, 0x0, 0x3ff,},
+		{ 0x0, 0x3ff, 0x0, 0x3ff, 0x0, 0x3ff,},
+	};
+	/*static const struct sde_csc_cfg hdrRGBlike = {
+		{
+			0x00010000, 0x007F8000, 0x00008000,
+			0x00010000, 0x00000000, 0x007F8000,
+			0x00010000, 0x00008000, 0x00008000,
+		},
+		{ 0x0, 0xfe00, 0xfe00,},
+		{ 0x0, 0x0, 0x0,},
+		{ 0x0, 0x3ff, 0x40, 0x3c0, 0x40, 0x3c0,},
+		{ 0x0, 0x3ff, 0x0, 0x3ff, 0x0, 0x3ff,},
+	};*/
+        static const struct sde_csc_cfg hdrRGB10 = {
+                {
+                        0x00012A15, 0x00000000, 0x0001ADBE,
+                        0x00012A15, 0xFFFFD008, 0xFFFF597E,
+                        0x00012A15, 0x0002244B, 0x00000000,
+                },
+                { 0xffc0, 0xfe00, 0xfe00,},
+                { 0x0, 0x0, 0x0,},
+                { 0x40, 0x3ac, 0x40, 0x3c0, 0x40, 0x3c0,},
+                { 0x00, 0x3ff, 0x00, 0x3ff, 0x00, 0x3ff,},
+        };
+#elif defined(CONFIG_PXLW_IRIS6)
+	static const struct sde_csc_cfg hdrYUV = {
+		{
+			0x00010000, 0x00000000, 0x00000000,
+			0x00000000, 0x00010000, 0x00000000,
+			0x00000000, 0x00000000, 0x00010000,
+		},
+		{ 0x0, 0x0, 0x0,},
+		{ 0x0, 0x0, 0x0,},
+		{ 0x0, 0x3ff, 0x0, 0x3ff, 0x0, 0x3ff,},
+		{ 0x0, 0x3ff, 0x0, 0x3ff, 0x0, 0x3ff,},
+	};
+	static const struct sde_csc_cfg hdrRGB10 = {
+		/* S15.16 format */
+		{
+			0x00012A15, 0x00000000, 0x0001ADBE,
+			0x00012A15, 0xFFFFD00B, 0xFFFF597E,
+			0x00012A15, 0x0002244B, 0x00000000,
+		},
+		/* signed bias */
+		{ 0xffc0, 0xfe00, 0xfe00,},
+		{ 0x0, 0x0, 0x0,},
+		/* unsigned clamp */
+		{ 0x40, 0x3ac, 0x40, 0x3c0, 0x40, 0x3c0,},
+		{ 0x00, 0x3ff, 0x00, 0x3ff, 0x00, 0x3ff,},
+	};
+#endif
+/* MODIFIED-END by Haojun Chen,BUG-7765094*/
+
 	if (!psde) {
 		SDE_ERROR("invalid plane\n");
 		return;
@@ -1127,6 +1198,20 @@ static inline void _sde_plane_setup_csc(struct sde_plane *psde)
 		psde->csc_ptr = (struct sde_csc_cfg *)&sde_csc10_YUV2RGB_601L;
 	else
 		psde->csc_ptr = (struct sde_csc_cfg *)&sde_csc_YUV2RGB_601L;
+
+/* MODIFIED-BEGIN by Haojun Chen, 2019-05-11,BUG-7765094*/
+#if defined(CONFIG_PXLW_IRIS3)
+	if (iris3_hdr_enable_get() == 1)
+		psde->csc_ptr = (struct sde_csc_cfg *)&hdrYUV;
+	else if (iris3_hdr_enable_get() == 2)
+		psde->csc_ptr = (struct sde_csc_cfg *)&hdrRGB10;
+#elif defined(CONFIG_PXLW_IRIS6)
+	if (iris_hdr_enable_get() == 1)
+		psde->csc_ptr = (struct sde_csc_cfg *)&hdrYUV;
+	else if (iris_hdr_enable_get() == 2)
+		psde->csc_ptr = (struct sde_csc_cfg *)&hdrRGB10;
+#endif
+/* MODIFIED-END by Haojun Chen,BUG-7765094*/
 
 	SDE_DEBUG_PLANE(psde, "using 0x%X 0x%X 0x%X...\n",
 			psde->csc_ptr->csc_mv[0],

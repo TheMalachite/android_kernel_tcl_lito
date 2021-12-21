@@ -233,6 +233,9 @@ struct dsi_display {
 	struct dsi_lane_map lane_map;
 	int cmdline_topology;
 	int cmdline_timing;
+#if defined(CONFIG_PXLW_IRIS3)
+	int cmdline_iris_mode;
+#endif
 	bool is_tpg_enabled;
 	bool poms_pending;
 	bool ulps_enabled;
@@ -274,6 +277,13 @@ struct dsi_display {
 	u32 clk_gating_config;
 	bool queue_cmd_waits;
 	struct workqueue_struct *dma_cmd_workq;
+
+#if defined(CONFIG_PXLW_IRIS6)
+	u32 off;
+	u32 cnt;
+	u8 cmd_data_type;
+#endif
+
 };
 
 int dsi_display_dev_probe(struct platform_device *pdev);
@@ -735,4 +745,7 @@ int dsi_display_cont_splash_config(void *display);
 int dsi_display_get_panel_vfp(void *display,
 	int h_active, int v_active);
 
+#ifdef CONFIG_TCT_DISPLAY
+struct dsi_display *get_main_display(void);
+#endif
 #endif /* _DSI_DISPLAY_H_ */

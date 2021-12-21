@@ -12,6 +12,17 @@
 #include "cam_common_util.h"
 #include "cam_packet_util.h"
 
+#if defined(CONFIG_TCT_DEVICEINFO)
+extern unsigned char CamNameB_module_name[256];
+extern unsigned char CamNameF_module_name[256];
+extern unsigned char CamNameB2_module_name[256];
+extern unsigned char CamNameB3_module_name[256];
+extern unsigned char CamNameB4_module_name[256];
+extern unsigned char CamOTPB_module_name[256];
+extern unsigned char CamOTPF_module_name[256];
+extern unsigned char CamOTPB3_module_name[256];
+extern unsigned char CamOTPB4_module_name[256];
+#endif
 
 static void cam_sensor_update_req_mgr(
 	struct cam_sensor_ctrl_t *s_ctrl,
@@ -678,6 +689,51 @@ void cam_sensor_shutdown(struct cam_sensor_ctrl_t *s_ctrl)
 	s_ctrl->sensor_state = CAM_SENSOR_INIT;
 }
 
+/*Begin jiwu.haung for [Task][9802606] add for ottawa depth cam sync camid on 20210107*/
+int cam_sensor_get_camid(struct cam_sensor_ctrl_t *s_ctrl)
+{
+	int err   = 0;
+	int camid = -1;
+	int ret   = -1;
+	struct device_node *node = NULL;
+
+	node = s_ctrl->of_node;
+
+	camid = of_get_named_gpio(node, "qcom,gpio-camid", 0);
+	CAM_INFO(CAM_SENSOR,"%s: camid %d\n", __func__, camid);
+
+	if (gpio_is_valid(camid)){
+		err = gpio_request(camid, "camid");
+		if (err){
+			pr_err("%s: camid request failed(%d).\n", __func__, err);
+			goto camid_failed;
+		}
+
+		err = gpio_direction_input(camid);
+		if (err){
+			pr_err("%s: camid input failed(%d).\n", __func__, err);
+			goto camid_failed;
+		}
+	}else{
+		pr_err("%s: camid_failed invalid.\n", __func__);
+		err = -ENODEV;
+		goto camid_failed;
+	}
+
+	ret = gpio_get_value(camid);
+
+	CAM_INFO(CAM_SENSOR,"%s: depth camid %d\n", __func__, ret);
+
+	gpio_free(camid);
+
+	return ret;
+
+camid_failed:
+	gpio_free(camid);
+	return err;
+}
+/*End   jiwu.haung for [Task][9802606] add for ottawa depth cam sync camid on 20210107*/
+
 int cam_sensor_match_id(struct cam_sensor_ctrl_t *s_ctrl)
 {
 	int rc = 0;
@@ -692,23 +748,86 @@ int cam_sensor_match_id(struct cam_sensor_ctrl_t *s_ctrl)
 		return -EINVAL;
 	}
 
-	rc = camera_io_dev_read(
+	if(slave_info->sensor_id == 0x8044 || slave_info->sensor_id == 0x5035 || slave_info->sensor_id == 0x2385 || slave_info->sensor_id == 0x02e0) {
+		rc = camera_io_dev_read(
 		&(s_ctrl->io_master_info),
 		slave_info->sensor_id_reg_addr,
+		&chipid, CAMERA_SENSOR_I2C_TYPE_BYTE,
+		CAMERA_SENSOR_I2C_TYPE_WORD);
+	} else {
+		rc = camera_io_dev_read(
+		&(s_ctrl->io_master_info),
+		slave_info->sensor_id_reg_addr,
+
 		&chipid,
 		s_ctrl->sensor_probe_addr_type,
 		s_ctrl->sensor_probe_data_type);
+	}
+
 
 	CAM_DBG(CAM_SENSOR, "read id: 0x%x expected id 0x%x:",
 		chipid, slave_info->sensor_id);
 
-	if (cam_sensor_id_by_mask(s_ctrl, chipid) != slave_info->sensor_id) {
+/*Begin jiwu.haung for [Task][9802606] add for ottawa depth cam sync camid on 20210107*/
+	if(cam_sensor_id_by_mask(s_ctrl, chipid) == 0x02e0) {
+		int depth_camid = cam_sensor_get_camid(s_ctrl);
+
+		if (((depth_camid ==1) && (slave_info->sensor_id == 0x02e1)) ||
+				((depth_camid !=1) && slave_info->sensor_id == 0x02e0))
+		{
+			CAM_INFO(CAM_SENSOR, "read id: 0x%x gpio-camid %d expected id 0x%x",
+					chipid, depth_camid, slave_info->sensor_id);
+		}
+		else
+		{
+			CAM_WARN(CAM_SENSOR, "read id: 0x%x doesn't match with expecting id 0x%x:",
+					chipid, slave_info->sensor_id);
+			return -ENODEV;
+		}
+	}else if (cam_sensor_id_by_mask(s_ctrl, chipid) != slave_info->sensor_id) {
 		CAM_WARN(CAM_SENSOR, "read id: 0x%x expected id 0x%x:",
 				chipid, slave_info->sensor_id);
 		return -ENODEV;
 	}
+/*End   jiwu.haung for [Task][9802606] add for ottawa depth cam sync camid on 20210107*/
+
+        CAM_WARN(CAM_SENSOR, "Camera probe state: %d , init sensorId(%d) deviceinfo",
+        s_ctrl->is_probe_succeed ,chipid);
+ #if defined(CONFIG_TCT_DEVICEINFO)
+#ifdef CONFIG_TCT_LITO_OTTAWA
+        if(chipid == 0x0582)
+          strcpy(CamNameB_module_name,"IMX582:TSP:48M:ASA4800003C1");
+        if(chipid == 0x0841)
+          strcpy(CamNameF_module_name,"S5KGD1SP:TSP:32M:ASA3200000C1");
+        if(chipid == 0x01641)
+          strcpy(CamNameB2_module_name,"OV16A10:TSP:16M:ASA1600022C1");
+        if(chipid == 0x02e0)
+          strcpy(CamNameB3_module_name,"GC02M1B:CXT:2M:ASA2001236C1");
+		if(chipid == 0x5035)
+          strcpy(CamNameB4_module_name,"GC5035:SHINETECH:5M:ASA5001218C1");
+#elif defined(CONFIG_TCT_PROJECT_IRVINE)
+	if(chipid == 0xf8d1)
+          strcpy(CamNameB_module_name,"S5KGM1ST03:TSP:48M:ASA4800004C1");
+        if(chipid == 0x487B)
+          strcpy(CamNameF_module_name,"S5K4H7:ST:8M:");
+        if(chipid == 0x885a)
+          strcpy(CamNameB2_module_name,"OV8856:TSP:8M:ASA8001109C1");
+        if(chipid == 0x02e0)
+          strcpy(CamNameB4_module_name,"GC02M1:EWELLY:2M:ASA2001214C1");
+#elif defined(CONFIG_TCT_LITO_CHICAGO)
+        if(chipid == 0x0582)
+          strcpy(CamNameB_module_name,"IMX582:TSP:48M:ASA4800003C1");
+        if(chipid == 0xf881)
+          strcpy(CamNameF_module_name,"S5KGH1SM:TSP:44M:ASA4400000C1");
+        if(chipid == 0x01641)
+          strcpy(CamNameB3_module_name,"OV16A10:TSP:16M:ASA1600022C1");
+
+#endif
+  #endif
+
 	return rc;
 }
+
 
 int32_t cam_sensor_driver_cmd(struct cam_sensor_ctrl_t *s_ctrl,
 	void *arg)
@@ -818,7 +937,7 @@ int32_t cam_sensor_driver_cmd(struct cam_sensor_ctrl_t *s_ctrl,
 		if ((s_ctrl->is_probe_succeed == 0) ||
 			(s_ctrl->sensor_state != CAM_SENSOR_INIT)) {
 			CAM_WARN(CAM_SENSOR,
-				"Not in right state to aquire %d， probe %d",
+				"Not in right state to aquire %d, probe %d",
 				s_ctrl->sensor_state, s_ctrl->is_probe_succeed);
 			rc = -EINVAL;
 			goto release_mutex;

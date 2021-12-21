@@ -14,7 +14,6 @@
 #include "cam_res_mgr_api.h"
 #include "cam_common_util.h"
 #include "cam_packet_util.h"
-
 int32_t cam_ois_construct_default_power_setting(
 	struct cam_sensor_power_ctrl_t *power_info)
 {
@@ -348,9 +347,11 @@ static int cam_ois_fw_download(struct cam_ois_ctrl_t *o_ctrl)
 		i2c_reg_setting.reg_setting[cnt].delay = 0;
 		i2c_reg_setting.reg_setting[cnt].data_mask = 0;
 	}
-
+    /*[bug-fix]-mod-begin,by jinghuang	task 9481054 on 20200526*/
+    /*modify i2c SEQ MODE*/
 	rc = camera_io_dev_write_continuous(&(o_ctrl->io_master_info),
-		&i2c_reg_setting, 1);
+		&i2c_reg_setting, 0);
+    /*[bug-fix]-mod-end,by jinghuang  task 9481054 on 20200526*/
 	if (rc < 0) {
 		CAM_ERR(CAM_OIS, "OIS FW download failed %d", rc);
 		goto release_firmware;
@@ -393,11 +394,15 @@ static int cam_ois_fw_download(struct cam_ois_ctrl_t *o_ctrl)
 		i2c_reg_setting.reg_setting[cnt].delay = 0;
 		i2c_reg_setting.reg_setting[cnt].data_mask = 0;
 	}
-
+    /*[bug-fix]-mod-begin,by jinghuang	task 9481054 on 20200526*/
+    /*modify i2c SEQ MODE*/
 	rc = camera_io_dev_write_continuous(&(o_ctrl->io_master_info),
-		&i2c_reg_setting, 1);
+		&i2c_reg_setting,0);
+    /*[bug-fix]-mod-end,by jinghuang  task 9481054 on 20200526*/
 	if (rc < 0)
 		CAM_ERR(CAM_OIS, "OIS FW download failed %d", rc);
+
+    CAM_ERR(CAM_OIS, "OIS FW download OK");
 
 release_firmware:
 	cma_release(dev_get_cma_area((o_ctrl->soc_info.dev)),
@@ -406,6 +411,481 @@ release_firmware:
 
 	return rc;
 }
+
+/*[bug-fix]-mod-begin,by jinghuang  task 9049013 on 20200408*/
+/*add for ois*/
+typedef struct REGSETTING{
+	uint16_t reg ;
+	uint16_t val ;
+}REGSETTING ;
+/*[bug-fix]-mod-begin,by jinghuang@tcl.com,task 9220454 on 20200413*/
+/*disable/enable ois center*/
+static int center_flag=0;
+/*[bug-fix]-mod-begin,by jinghuang@tcl.com,task 9220454 on 20200413*/
+
+//add by jinghuang for mmi apk
+static int mmi_flag=0;
+
+static int cam_ois_preinitsetting_download(struct cam_ois_ctrl_t *o_ctrl)
+{
+	uint16_t                           total_bytes = 0;
+	int32_t                            rc = 0, cnt;
+	struct cam_sensor_i2c_reg_setting  i2c_reg_setting;
+	struct page                       *page = NULL;
+  uint32_t                           fw_size;
+  const REGSETTING preinit_setting[] = {
+    {0x8262 ,0xBF03} ,
+    {0x8263 ,0x9F05} ,
+    {0x8264 ,0x6040} ,
+    {0x8260 ,0x1130} ,
+    {0x8265 ,0x8000}  ,
+    {0x8261 ,0x0280} ,
+    {0x8261 ,0x0380} ,
+    {0x8261 ,0x0988} ,
+  } ;
+
+	if (!o_ctrl) {
+		CAM_ERR(CAM_OIS, "Invalid Args");
+		return -EINVAL;
+	}
+
+
+	total_bytes = sizeof(preinit_setting)/sizeof(preinit_setting[0]) ;
+
+	i2c_reg_setting.addr_type = CAMERA_SENSOR_I2C_TYPE_WORD;
+	i2c_reg_setting.data_type = CAMERA_SENSOR_I2C_TYPE_WORD;
+	i2c_reg_setting.size = total_bytes;
+	i2c_reg_setting.delay = 0;
+	fw_size = PAGE_ALIGN(sizeof(struct cam_sensor_i2c_reg_array) *	total_bytes) >> PAGE_SHIFT;
+	page = cma_alloc(dev_get_cma_area((o_ctrl->soc_info.dev)),fw_size, 0, GFP_KERNEL);
+
+	if (!page) {
+		CAM_ERR(CAM_OIS, "Failed in allocating i2c_array");
+		return -ENOMEM;
+	}
+
+	i2c_reg_setting.reg_setting = (struct cam_sensor_i2c_reg_array *) (page_address(page));
+/*[bug-fix]-mod-begin,by jinghuang ,task 9466923 on20200520*/
+/*add delay for modify  continue address mode to single address.OIS ic only support  single address.*/
+	for (cnt = 0 ; cnt < total_bytes ; cnt++) {
+		i2c_reg_setting.reg_setting[cnt].reg_addr = preinit_setting[cnt].reg ;
+		i2c_reg_setting.reg_setting[cnt].reg_data = preinit_setting[cnt].val ;
+		i2c_reg_setting.reg_setting[cnt].delay = 1;
+		i2c_reg_setting.reg_setting[cnt].data_mask = 0;
+		CAM_ERR(CAM_OIS ,"REG_0x%x : 0x%x",i2c_reg_setting.reg_setting[cnt].reg_addr,
+		                                   i2c_reg_setting.reg_setting[cnt].reg_data);
+	}
+/*[bug-fix]-mod-end,by jinghuang ,task 9466923 on20200520*/
+
+	rc = camera_io_dev_write(&(o_ctrl->io_master_info),	&i2c_reg_setting);
+	if (rc < 0) {
+		CAM_ERR(CAM_OIS, "Init Setting download failed %d", rc);
+//		return -ENOMEM;
+	}
+	cma_release(dev_get_cma_area((o_ctrl->soc_info.dev)),	page, fw_size);
+	page = NULL;
+
+	return rc;
+}
+
+static int cam_ois_initsetting_download(struct cam_ois_ctrl_t *o_ctrl)
+{
+	uint16_t                           total_bytes = 0;
+	int32_t                            rc = 0, cnt;
+	struct cam_sensor_i2c_reg_setting  i2c_reg_setting;
+	struct page                       *page = NULL;
+  uint32_t                           fw_size;
+  const REGSETTING initsetting[] = {
+    {0x8205 ,0x0c00} ,
+    {0x8205 ,0x0d00} ,
+    {0x8c01 ,0x0101} ,
+  } ;
+/*[bug-fix]-mod-begin,by jinghuang@tcl.com,task 9483613 on 20200528*/
+/*add setting only for mmi ois cali*/
+    const REGSETTING initsetting_mmi[] = {
+    {0x8205 ,0x0c00} ,
+    {0x8205 ,0x0d00} ,
+    {0x8c01 ,0x0101} ,
+  } ;
+/*[bug-fix]-mod-end,by jinghuang@tcl.com,task 9483613 on 20200528*/
+
+	if (!o_ctrl) {
+		CAM_ERR(CAM_OIS, "Invalid Args");
+		return -EINVAL;
+	}
+/*[bug-fix]-mod-begin,by jinghuang@tcl.com,task 9483613 on 20200528*/
+/*add setting only for mmi ois cali*/
+    if(mmi_flag==1)
+      total_bytes = sizeof(initsetting_mmi)/sizeof(initsetting_mmi[0]) ;
+    else
+	  total_bytes = sizeof(initsetting)/sizeof(initsetting[0]) ;
+/*[bug-fix]-mod-end,by jinghuang@tcl.com,task 9483613 on 20200528*/
+
+	i2c_reg_setting.addr_type = CAMERA_SENSOR_I2C_TYPE_WORD;
+	i2c_reg_setting.data_type = CAMERA_SENSOR_I2C_TYPE_WORD;
+	i2c_reg_setting.size = total_bytes;
+	i2c_reg_setting.delay = 0;
+	fw_size = PAGE_ALIGN(sizeof(struct cam_sensor_i2c_reg_array) *	total_bytes) >> PAGE_SHIFT;
+	page = cma_alloc(dev_get_cma_area((o_ctrl->soc_info.dev)),fw_size, 0, GFP_KERNEL);
+
+	if (!page) {
+		CAM_ERR(CAM_OIS, "Failed in allocating i2c_array");
+		return -ENOMEM;
+	}
+
+	i2c_reg_setting.reg_setting = (struct cam_sensor_i2c_reg_array *) (page_address(page));
+
+  CAM_ERR(CAM_OIS ,"initsetting : total_bytes 0x%d",total_bytes);
+ /*[bug-fix]-mod-begin,by jinghuang@tcl.com,task 9483613 on 20200528*/
+/*add setting only for mmi ois cali*/
+	for (cnt = 0 ; cnt < total_bytes;cnt++) {
+		if(mmi_flag==1){
+          i2c_reg_setting.reg_setting[cnt].reg_addr = initsetting_mmi[cnt].reg ;
+		  i2c_reg_setting.reg_setting[cnt].reg_data = initsetting_mmi[cnt].val ;
+		}else{
+          i2c_reg_setting.reg_setting[cnt].reg_addr = initsetting[cnt].reg ;
+          i2c_reg_setting.reg_setting[cnt].reg_data = initsetting[cnt].val ;
+		}
+		i2c_reg_setting.reg_setting[cnt].delay = 0;
+		i2c_reg_setting.reg_setting[cnt].data_mask = 0;
+    CAM_ERR(CAM_OIS ,"REG_0x%x : 0x%x",i2c_reg_setting.reg_setting[cnt].reg_addr,i2c_reg_setting.reg_setting[cnt].reg_data);
+	}
+/*[bug-fix]-mod-end,by jinghuang@tcl.com,task 9483613 on 20200528*/
+
+	rc = camera_io_dev_write(&(o_ctrl->io_master_info),	&i2c_reg_setting);
+	if (rc < 0) {
+		CAM_ERR(CAM_OIS, "Init Setting download failed %d", rc);
+//		return -ENOMEM;
+	}
+	cma_release(dev_get_cma_area((o_ctrl->soc_info.dev)),	page, fw_size);
+	page = NULL;
+
+	return rc;
+	}
+
+static int cam_ois_enablesetting_download(struct cam_ois_ctrl_t *o_ctrl)
+{
+	uint16_t                           total_bytes = 0;
+	int32_t                            rc = 0, cnt;
+	struct cam_sensor_i2c_reg_setting  i2c_reg_setting;
+	struct page                       *page = NULL;
+  uint32_t                           fw_size;
+/*[bug-fix]-mod-beging,by jinghuang@tcl.com,task 9049013 on 20200409*/
+/*enablesetting for old module*/
+/*[bug-fix]-mod-beging,by jinghuang@tcl.com,task 9336600 on 20200428*/
+/*config 1 degree to 1.3 degree  for ois cali*/
+  const REGSETTING enablesetting[]= {
+    {0x847f ,0x0c0c} ,
+    {0x8436 ,0xfd7f} ,
+    {0x8440 ,0xf03f} ,
+    {0x8443 ,0xa023} ,
+
+    {0x841b ,0x8000} ,
+    {0x84b6 ,0xfd7f} ,
+    {0x84c0 ,0xf03f} ,
+    {0x84c3 ,0xa023} ,
+
+    {0x849b ,0x8000} ,
+    {0x8438 ,0x000e} ,
+    {0x84b8 ,0x000e} ,
+    {0x8447 ,0x811f} ,
+    {0x84c7 ,0x811f} ,
+
+    {0x8290 ,0xfd7f} ,
+    {0x8296 ,0x8001} ,
+    {0x8291 ,0x0500} ,
+    {0x8292 ,0x0200} ,
+    {0x8299 ,0x8004} ,
+
+    {0x847f ,0x0d0d} , //center register disable
+  };
+/*[bug-fix]-mod-end,by jinghuang@tcl.com,task 9336600 on 20200428*/
+/*[bug-fix]-mod-end,by jinghuang@tcl.com,task 9049013 on 20200409*/
+
+/*[bug-fix]-mod-begin,by jinghuang@tcl.com,task 9483613 on 20200528*/
+/*add setting only for mmi ois cali*/
+  const REGSETTING enablesetting_mmi[]= {
+    {0x847f ,0x0c0c} ,
+    {0x8436 ,0xff7f} ,
+    {0x8440 ,0xff7f} ,
+    {0x8443 ,0xff7f} ,
+
+    {0x841b ,0x8000} ,
+    {0x84b6 ,0xff7f} ,
+    {0x84c0 ,0xff7f} ,
+    {0x84c3 ,0xff7f} ,
+
+    {0x849b ,0x8000} ,
+    {0x8438 ,0xa412} ,
+    {0x84b8 ,0xa412} ,
+    {0x8447 ,0x000d} ,
+
+    {0x84c7 ,0x000d} ,
+    {0x847f ,0x0d0d} , //center register disable
+  };
+/*[bug-fix]-mod-end,by jinghuang@tcl.com,task 9483613 on 20200528*/
+
+
+	if (!o_ctrl) {
+		CAM_ERR(CAM_OIS, "Invalid Args");
+		return -EINVAL;
+	}
+/*[bug-fix]-mod-begin,by jinghuang@tcl.com,task 9483613 on 20200528*/
+/*add setting only for mmi ois cali*/
+    if(mmi_flag==1)
+	  total_bytes = sizeof(enablesetting_mmi)/sizeof(enablesetting_mmi[0]);
+	else
+      total_bytes = sizeof(enablesetting)/sizeof(enablesetting[0]);
+	CAM_ERR(CAM_OIS, "total_bytes=%d",total_bytes);
+/*[bug-fix]-mod-end,by jinghuang@tcl.com,task 9483613 on 20200528*/
+
+	i2c_reg_setting.addr_type = CAMERA_SENSOR_I2C_TYPE_WORD;
+	i2c_reg_setting.data_type = CAMERA_SENSOR_I2C_TYPE_WORD;
+	i2c_reg_setting.size = total_bytes;
+	i2c_reg_setting.delay = 0;
+	fw_size = PAGE_ALIGN(sizeof(struct cam_sensor_i2c_reg_array) *	total_bytes) >> PAGE_SHIFT;
+	page = cma_alloc(dev_get_cma_area((o_ctrl->soc_info.dev)),fw_size, 0, GFP_KERNEL);
+
+	if (!page) {
+		CAM_ERR(CAM_OIS, "Failed in allocating i2c_array");
+		return -ENOMEM;
+	}
+
+	i2c_reg_setting.reg_setting = (struct cam_sensor_i2c_reg_array *) (page_address(page));
+/*[bug-fix]-mod-beging,by jinghuang@tcl.com,9459312 on 20200518*/
+/*compatible with old and new ois fw*/
+/*[bug-fix]-mod-begin,by jinghuang@tcl.com,task 9483613 on 20200528*/
+/*add setting only for mmi ois cali*/
+	for (cnt = 0  ; cnt < total_bytes ;cnt++) {
+          if(mmi_flag==1){
+            i2c_reg_setting.reg_setting[cnt].reg_addr = enablesetting_mmi[cnt].reg;
+            i2c_reg_setting.reg_setting[cnt].reg_data = enablesetting_mmi[cnt].val;
+          }else{
+            i2c_reg_setting.reg_setting[cnt].reg_addr = enablesetting[cnt].reg;
+            i2c_reg_setting.reg_setting[cnt].reg_data = enablesetting[cnt].val;
+          }
+        
+
+/*[bug-fix]-mod-end,by jinghuang@tcl.com,task 9483613 on 20200528*/
+/*[bug-fix]-mod-begin,by jinghuang ,task 9466923 on20200520*/
+/*add delay for modify	continue address mode to single address.OIS ic only support  single address.*/
+        i2c_reg_setting.reg_setting[cnt].delay = 1;
+/*[bug-fix]-mod-end,by jinghuang ,task 9466923 on20200520*/
+        i2c_reg_setting.reg_setting[cnt].data_mask = 0;
+        //CAM_ERR(CAM_OIS ,"REG_0x%x : 0x%x",i2c_reg_setting.reg_setting[cnt].reg_addr,i2c_reg_setting.reg_setting[cnt].reg_data);
+    }
+/*[bug-fix]-mod-end,by jinghuang@tcl.com,9459312 on 20200518*/
+
+/*[bug-fix]-mod-begin,by jinghuang@tcl.com,task 9220454 on 20200413*/
+/*/*disable/enable ois center*/
+    CAM_ERR(CAM_OIS, "ois current center_flag=%d,mmi_flag=%d",center_flag,mmi_flag);
+    if(center_flag==1){
+      i2c_reg_setting.reg_setting[total_bytes-1].reg_data=0x0c0c;
+    }else if(center_flag==0){
+      i2c_reg_setting.reg_setting[total_bytes-1].reg_data=0x0d0d;
+	}
+/*[bug-fix]-mod-end,by jinghuang@tcl.com,task 9220454 on 20200413*/
+
+        rc = camera_io_dev_write(&(o_ctrl->io_master_info),	&i2c_reg_setting);
+        if (rc < 0) {
+            CAM_ERR(CAM_OIS, "enable Setting download failed %d", rc);
+//return -ENOMEM;
+        }
+        cma_release(dev_get_cma_area((o_ctrl->soc_info.dev)),	page, fw_size);
+        page = NULL;
+
+        return rc;
+}
+
+static int cam_ois_calidata_download(struct cam_ois_ctrl_t *o_ctrl)
+{
+    uint16_t                           total_bytes = 0;
+    int32_t                            rc = 0, cnt;
+    struct cam_sensor_i2c_reg_setting  i2c_reg_setting;
+    struct page                       *page = NULL;
+    uint32_t                           fw_size;
+
+  const REGSETTING calibrationdata[]= {
+    {0x8230 ,0xda01} ,
+    {0x8231 ,0xfc01} ,
+    {0x8232 ,0xe801} ,
+
+    {0x841E ,0x0f00} ,
+    {0x849E ,0xa000} ,
+
+    {0x8239 ,0x7f00} ,
+    {0x823B ,0x7d00} ,
+
+    {0x8406 ,0x1000} ,
+    {0x8486 ,0x1000} ,
+
+    {0x8446 ,0x00a0} ,
+    {0x84c6 ,0x00a0} ,
+    {0x840f ,0x0080} ,
+    {0x848f ,0x0080} ,
+
+    //{0x846A ,0x21} ,
+    //{0x846B ,0x82} ,
+    //{0x8470 ,0x08} ,
+    //{0x8472 ,0x20} ,
+  };
+ //   return 0;//adb by jinghuang for test disable ois cali data
+    if (!o_ctrl) {
+        CAM_ERR(CAM_OIS, "Invalid Args");
+        return -EINVAL;
+    }
+
+    total_bytes = sizeof(calibrationdata)/sizeof(calibrationdata[0]) ;
+
+    i2c_reg_setting.addr_type = CAMERA_SENSOR_I2C_TYPE_WORD;
+    i2c_reg_setting.data_type = CAMERA_SENSOR_I2C_TYPE_WORD;
+    i2c_reg_setting.size = total_bytes;
+    i2c_reg_setting.delay = 0;
+    fw_size = PAGE_ALIGN(sizeof(struct cam_sensor_i2c_reg_array) *	total_bytes) >> PAGE_SHIFT;
+    page = cma_alloc(dev_get_cma_area((o_ctrl->soc_info.dev)),fw_size, 0, GFP_KERNEL);
+
+    if (!page) {
+        CAM_ERR(CAM_OIS, "Failed in allocating i2c_array");
+        return -ENOMEM;
+    }
+    i2c_reg_setting.reg_setting = (struct cam_sensor_i2c_reg_array *) (page_address(page));
+
+    for (cnt = 0  ; cnt < total_bytes ;cnt++) {
+        i2c_reg_setting.reg_setting[cnt].reg_addr = calibrationdata[cnt].reg ;
+        i2c_reg_setting.reg_setting[cnt].reg_data = calibrationdata[cnt].val ;
+        i2c_reg_setting.reg_setting[cnt].delay = 1;
+        i2c_reg_setting.reg_setting[cnt].data_mask = 0;
+        CAM_ERR(CAM_OIS ,"REG_0x%x : 0x%x",i2c_reg_setting.reg_setting[cnt].reg_addr,i2c_reg_setting.reg_setting[cnt].reg_data);
+    }
+
+    rc = camera_io_dev_write(&(o_ctrl->io_master_info),	&i2c_reg_setting);
+    if (rc < 0) {
+        CAM_ERR(CAM_OIS, "enable Setting download failed %d", rc);
+ //       return -ENOMEM;
+    }
+	cma_release(dev_get_cma_area((o_ctrl->soc_info.dev)),	page, fw_size);
+	page = NULL;
+
+	return rc;
+}
+/*[bug-fix]-mod-end,by jinghuang  task 9049013 on 20200408*/
+
+
+/*[bug-fix]-mod-begin,by jinghuang@tcl.com,task 9220454 on 20200413*/
+/*add function ois r/w  */
+static  char ois_read_cmd_buf[256];
+ssize_t ois_cali_data_show(struct device *dev, struct device_attribute *attr, char *buf){
+
+  //return data to user
+  strcpy(buf,ois_read_cmd_buf);
+  return sizeof(ois_read_cmd_buf);
+
+}
+
+ssize_t ois_cali_data_store(struct device *dev,  struct device_attribute *attr, const char *buf, size_t count){
+
+  struct cam_ois_ctrl_t *o_ctrl = NULL;
+  int32_t                            rc = 0;
+  struct cam_sensor_i2c_reg_setting  i2c_reg_setting;
+  struct page                       *page = NULL;
+  uint32_t                           fw_size;
+  char cmd_buf[32];
+  uint32_t cmd_adress=0,cmd_data=0,num_bytes=0;
+  char flag;
+  uint8_t seqr_buff[64]={0},i=0;
+
+  struct platform_device *pdev = container_of(dev, struct platform_device, dev);
+  memset(cmd_buf,0,32);
+  memset(ois_read_cmd_buf,0,sizeof(ois_read_cmd_buf));
+  o_ctrl = platform_get_drvdata(pdev);
+
+
+  if (!o_ctrl) {
+      CAM_ERR(CAM_OIS, "Invalid Args");
+      return count;
+  }
+  //cpy user cmd to kernel 0x:0x:r  0x:0x:w
+  strcpy(cmd_buf,buf);
+  sscanf(cmd_buf,"%x:%x:%c",&cmd_adress,&cmd_data,&flag);
+  
+  if(flag=='w'){
+  CAM_ERR(CAM_OIS, "ois write:adress=0x%x,data=0x%x",cmd_adress,cmd_data);
+
+  //add flag for center enable/disable
+  if((cmd_adress==0x847f)&&(cmd_data==0x0c0c)){
+    center_flag=1;
+  }else if((cmd_adress==0x847f)&&(cmd_data==0x0d0d)){
+    center_flag=0;
+  }else{
+    CAM_ERR(CAM_OIS, "ois center_flag=%d",center_flag);
+  }
+  i2c_reg_setting.addr_type = CAMERA_SENSOR_I2C_TYPE_WORD;
+  i2c_reg_setting.data_type = CAMERA_SENSOR_I2C_TYPE_WORD;
+  i2c_reg_setting.size = 1;
+  i2c_reg_setting.delay = 0;
+  fw_size = PAGE_ALIGN(sizeof(struct cam_sensor_i2c_reg_array) *	(i2c_reg_setting.size)) >> PAGE_SHIFT;
+  page = cma_alloc(dev_get_cma_area((o_ctrl->soc_info.dev)),fw_size, 0, GFP_KERNEL);
+
+  if (!page) {
+      CAM_ERR(CAM_OIS, "Failed in allocating i2c_array");
+      return count;
+  }
+  i2c_reg_setting.reg_setting = (struct cam_sensor_i2c_reg_array *) (page_address(page));
+  i2c_reg_setting.reg_setting[0].reg_addr = cmd_adress ;
+  i2c_reg_setting.reg_setting[0].reg_data =cmd_data ;
+  i2c_reg_setting.reg_setting[0].delay = 1;
+  i2c_reg_setting.reg_setting[0].data_mask = 0;
+
+  rc = camera_io_dev_write(&(o_ctrl->io_master_info),	&i2c_reg_setting);
+  if (rc < 0) {
+      CAM_ERR(CAM_OIS, "enable Setting download failed %d", rc);
+  }
+  cma_release(dev_get_cma_area((o_ctrl->soc_info.dev)),	page, fw_size);
+  page = NULL;
+
+    }else if(flag=='r'){
+     rc = camera_io_dev_read(&(o_ctrl->io_master_info),cmd_adress,&cmd_data,CAMERA_SENSOR_I2C_TYPE_WORD,CAMERA_SENSOR_I2C_TYPE_WORD);
+     if (rc < 0) {
+      CAM_ERR(CAM_OIS, "ois Failed: random read I2C settings: %d",rc);
+      return count;
+       } else{
+            CAM_ERR(CAM_OIS,"ois read::address: 0x%x  reg_data: 0x%x",cmd_adress,cmd_data);
+            sprintf(ois_read_cmd_buf,"%x\n",cmd_data);
+            CAM_ERR(CAM_OIS, "ois ois_read_cmd_buf=%s",ois_read_cmd_buf);
+       }
+   }else if(flag=='s'){//seq read
+     //mdelay(10);
+     //[bug-fix]-add,by jinghuang@tcl.com,10594634  10562901 on 20201229,not allowed EIS read ois when ois is not ready
+     if(o_ctrl->cam_ois_state==CAM_OIS_START){
+     num_bytes=cmd_data;//read iic data count bytes
+     rc = camera_io_dev_read_seq(&(o_ctrl->io_master_info),cmd_adress,seqr_buff,CAMERA_SENSOR_I2C_TYPE_BYTE,CAMERA_SENSOR_I2C_TYPE_BYTE,num_bytes);
+     if (rc < 0) {
+      CAM_ERR(CAM_OIS, "ois Failed: seqr read I2C settings: %d",rc);
+      return count;
+       } else{
+            for(i=0;i<num_bytes;i++){
+              CAM_DBG(CAM_OIS,"ois read::address: 0x%x  reg_data[%d]: 0x%x",cmd_adress,i,seqr_buff[i]);
+              sprintf(&ois_read_cmd_buf[3*i],"%.2x:",seqr_buff[i]);
+            }
+            CAM_DBG(CAM_OIS,"ois read::address: 0x%x  reg_data: 0x%x",cmd_adress,cmd_data);
+            CAM_DBG(CAM_OIS, "ois ois_read_cmd_buf=%s",ois_read_cmd_buf);
+       }
+      }
+   }
+else if(flag=='m'){//'m':enter mmi set flag 1
+     CAM_ERR(CAM_OIS, "enter mmi ois cali set flag 1");
+     mmi_flag=1;
+   }else if(flag=='c'){//'c':enter mmi clear flag
+    CAM_ERR(CAM_OIS, "exit mmi ois cali clear flag");
+    mmi_flag=0;
+   }else{
+    CAM_ERR(CAM_OIS, "ois unknow cmd!!!");
+   }
+  return count;
+}
+/*[bug-fix]-mod-end,by jinghuang@tcl.com,task 9220454 on 20200413*/
+
+
 
 /**
  * cam_ois_pkt_parse - Parse csl packet
@@ -576,30 +1056,62 @@ static int cam_ois_pkt_parse(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 			}
 			o_ctrl->cam_ois_state = CAM_OIS_CONFIG;
 		}
-
+        /*[bug-fix]-mod-begin,by jinghuang	task 9049013 on 20200408*/
+        /*add for ois*/
+		//step1 add by jinghuang  pre init setting
+	    cam_ois_preinitsetting_download(o_ctrl);
+	    mdelay(10);
+        //step 2 add by jinghuang  download fw
 		if (o_ctrl->ois_fw_flag) {
 			rc = cam_ois_fw_download(o_ctrl);
 			if (rc) {
 				CAM_ERR(CAM_OIS, "Failed OIS FW Download");
 				goto pwr_dwn;
+			}else{
+				CAM_ERR(CAM_OIS, " OIS FW Download ok");
 			}
 		}
-
-		rc = cam_ois_apply_settings(o_ctrl, &o_ctrl->i2c_init_data);
+        mdelay(5);
+		//step 3 add by jinghuang  init setting
+		cam_ois_initsetting_download(o_ctrl);
+		mdelay(10);
+#if 0
+	//	rc = cam_ois_apply_settings(o_ctrl, &o_ctrl->i2c_init_data);
 		if ((rc == -EAGAIN) &&
 			(o_ctrl->io_master_info.master_type == CCI_MASTER)) {
-			CAM_WARN(CAM_OIS,
+			CAM_ERR(CAM_OIS,
 				"CCI HW is restting: Reapplying INIT settings");
 			usleep_range(1000, 1010);
 			rc = cam_ois_apply_settings(o_ctrl,
 				&o_ctrl->i2c_init_data);
 		}
+
+#endif
+//step 4 add by jinghuang  calidata
+	  CAM_ERR(CAM_OIS, "jinghuang is_ois_calib=%d",o_ctrl->is_ois_calib);
+	#if 1
+	  if (o_ctrl->is_ois_calib) {
+		  rc = cam_ois_apply_settings(o_ctrl,
+			  &o_ctrl->i2c_calib_data);
+		  if (rc) {
+			  CAM_ERR(CAM_OIS, "Cannot apply calib data");
+			  goto pwr_dwn;
+		  }
+	  }else{
+	cam_ois_calidata_download(o_ctrl);
+	  }
+#endif	  
+    mdelay(10);
+//step 5 add by jinghuang   enablesetting
+    rc =  cam_ois_enablesetting_download(o_ctrl);
 		if (rc < 0) {
 			CAM_ERR(CAM_OIS,
 				"Cannot apply Init settings: rc = %d",
 				rc);
 			goto pwr_dwn;
 		}
+#if 0
+		CAM_ERR(CAM_OIS, "jinghuang is_ois_calib=%d",o_ctrl->is_ois_calib);
 
 		if (o_ctrl->is_ois_calib) {
 			rc = cam_ois_apply_settings(o_ctrl,
@@ -608,17 +1120,21 @@ static int cam_ois_pkt_parse(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 				CAM_ERR(CAM_OIS, "Cannot apply calib data");
 				goto pwr_dwn;
 			}
+		}else {
+      cam_ois_calidata_download(o_ctrl);
 		}
+#endif
+/*[bug-fix]-mod-end,by jinghuang  task 9049013 on 20200408*/
 
 		rc = delete_request(&o_ctrl->i2c_init_data);
 		if (rc < 0) {
-			CAM_WARN(CAM_OIS,
+			CAM_ERR(CAM_OIS,
 				"Fail deleting Init data: rc: %d", rc);
 			rc = 0;
 		}
 		rc = delete_request(&o_ctrl->i2c_calib_data);
 		if (rc < 0) {
-			CAM_WARN(CAM_OIS,
+			CAM_ERR(CAM_OIS,
 				"Fail deleting Calibration data: rc: %d", rc);
 			rc = 0;
 		}
@@ -644,13 +1160,16 @@ static int cam_ois_pkt_parse(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 			CAM_ERR(CAM_OIS, "OIS pkt parsing failed: %d", rc);
 			return rc;
 		}
-
+/*[bug-fix]-mod-begin,by jinghuang	defect 9372059 9342038 on 20200518*/
+/*add for custom control:EIS need disable ois*/
+#if 1
 		rc = cam_ois_apply_settings(o_ctrl, i2c_reg_settings);
 		if (rc < 0) {
 			CAM_ERR(CAM_OIS, "Cannot apply mode settings");
 			return rc;
 		}
-
+#endif
+/*[bug-fix]-mod-end,by jinghuang	defect 9372059 9342038 on 20200518*/
 		rc = delete_request(i2c_reg_settings);
 		if (rc < 0) {
 			CAM_ERR(CAM_OIS,

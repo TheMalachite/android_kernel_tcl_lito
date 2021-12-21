@@ -755,6 +755,10 @@ static void dp_aux_set_sim_mode(struct dp_aux *dp_aux, bool en,
 	mutex_unlock(&aux->mutex);
 }
 
+#ifdef CONFIG_PTN36502_I2C
+extern void ptn_orientation_switch(int orientation);
+#endif
+
 static int dp_aux_configure_aux_switch(struct dp_aux *dp_aux,
 		bool enable, int orientation)
 {
@@ -794,9 +798,13 @@ static int dp_aux_configure_aux_switch(struct dp_aux *dp_aux,
 	DP_DEBUG("enable=%d, orientation=%d, event=%d\n",
 			enable, orientation, event);
 
+#ifdef CONFIG_PTN36502_I2C
+	ptn_orientation_switch(orientation);
+#else
 	rc = fsa4480_switch_event(aux->aux_switch_node, event);
 	if (rc)
 		DP_ERR("failed to configure fsa4480 i2c device (%d)\n", rc);
+#endif
 end:
 	return rc;
 }
