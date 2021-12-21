@@ -1,0 +1,5 @@
+config TCT_HKC
+    bool "HKC"
+    default y
+    help
+      Enable Hot Key Catching feature if set
