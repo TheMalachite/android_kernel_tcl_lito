@@ -71,6 +71,11 @@ config SECURITY_SELINUX_DEVELOP
 	  can interactively toggle the kernel between enforcing mode and
 	  permissive mode (if permitted by the policy) via /selinux/enforce.
 
+config TCT_FEATURE_TOKEN_SUPPORT
+	bool "TCT token Support"
+	help
+	  Say Y to enable tct token support
+
 config SECURITY_SELINUX_AVC_STATS
 	bool "NSA SELinux AVC Statistics"
 	depends on SECURITY_SELINUX

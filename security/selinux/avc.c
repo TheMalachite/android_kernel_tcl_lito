@@ -1021,9 +1021,22 @@ static noinline int avc_denied(struct selinux_state *state,
 	if (flags & AVC_STRICT)
 		return -EACCES;
 
+#ifndef CONFIG_TCT_FEATURE_TOKEN_SUPPORT
 	if (enforcing_enabled(state) &&
 	    !(avd->flags & AVD_FLAGS_PERMISSIVE))
 		return -EACCES;
+#else
+	if (enforcing_enabled(state) &&
+	    !(avd->flags & AVD_FLAGS_PERMISSIVE)) {
+		static u32 tct_su_sid = SECSID_NULL;
+		if (tct_su_sid == SECSID_NULL) {
+			security_context_str_to_sid(state, "u:r:tct_su:s0",
+						    &tct_su_sid, GFP_ATOMIC);
+		}
+		if (likely(ssid != tct_su_sid && tsid != tct_su_sid))
+			return -EACCES;
+	}
+#endif
 
 	avc_update_node(state->avc, AVC_CALLBACK_GRANT, requested, driver,
 			xperm, ssid, tsid, tclass, avd->seqno, NULL, flags);

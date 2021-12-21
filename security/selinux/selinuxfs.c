@@ -132,6 +132,20 @@ static ssize_t sel_read_enforce(struct file *filp, char __user *buf,
 }
 
 #ifdef CONFIG_SECURITY_SELINUX_DEVELOP
+/* [TCTNB-SYS][Token]Begin Modified by xiaoyang.ye, 2020-09-04, TASK-9875992 */
+#ifdef CONFIG_TCT_FEATURE_TOKEN_SUPPORT
+static bool allow_setenforce = 0;
+module_param_named(asenforce, allow_setenforce, bool, S_IRUGO | S_IWUSR);
+
+static int __init oemtoken_setup(char *str)
+{
+	if (!strcmp(str, "true"))
+		allow_setenforce = 1;
+	return 1;
+}
+__setup("androidboot.roottoken=", oemtoken_setup);
+#endif
+/* [TCTNB-SYS][Token]End Modified by xiaoyang.ye, 2020-09-04, TASK-9875992 */
 static ssize_t sel_write_enforce(struct file *file, const char __user *buf,
 				 size_t count, loff_t *ppos)
 
@@ -165,7 +179,13 @@ static ssize_t sel_write_enforce(struct file *file, const char __user *buf,
 				      current_sid(), SECINITSID_SECURITY,
 				      SECCLASS_SECURITY, SECURITY__SETENFORCE,
 				      NULL);
-		if (length)
+		if (length
+/* [TCTNB-SYS][Token]Begin Modified by xiaoyang.ye, 2020-09-04, TASK-9875992 */
+#ifdef CONFIG_TCT_FEATURE_TOKEN_SUPPORT
+			&& !allow_setenforce
+#endif
+/* [TCTNB-SYS][Token]End Modified by xiaoyang.ye, 2020-09-04, TASK-9875992 */
+		)
 			goto out;
 		audit_log(audit_context(), GFP_KERNEL, AUDIT_MAC_STATUS,
 			"enforcing=%d old_enforcing=%d auid=%u ses=%u"
