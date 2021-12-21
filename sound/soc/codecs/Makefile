@@ -515,3 +515,14 @@ obj-$(CONFIG_SND_SOC_MAX9877)	+= snd-soc-max9877.o
 obj-$(CONFIG_SND_SOC_MAX98504)	+= snd-soc-max98504.o
 obj-$(CONFIG_SND_SOC_SIMPLE_AMPLIFIER)	+= snd-soc-simple-amplifier.o
 obj-$(CONFIG_SND_SOC_TPA6130A2)	+= snd-soc-tpa6130a2.o
+
+obj-$(CONFIG_SND_SOC_TFA98XX)	+= tfa9894/
+#$(CONFIG_SND_SMARTPA_AW881XX)
+obj-$(CONFIG_SND_SMARTPA_AW881XX) += aw881xx/aw881xx.o aw881xx/aw881xx_monitor.o aw881xx/aw881xx_cali.o
+obj-$(CONFIG_SND_SMARTPA_AW881XX_OTTAWA) += aw881xx_v2/aw881xx.o aw881xx_v2/aw881xx_monitor.o aw881xx_v2/aw881xx_cali.o
+
+#begin mod by fuhua.wang for task 9554561 on 2020.07.10
+obj-$(CONFIG_SND_SMARTPA_AW881XX_IRVINE)  += aw881xx_irvine/aw881xx.o aw881xx_irvine/aw881xx_monitor.o aw881xx_irvine/aw881xx_cali.o
+#end   mod by fuhua.wang for task 9554561 on 2020.07.10
+
+obj-$(CONFIG_SND_SOC_TFA98XX_CHICAGO)	+= tfa9894_chicago/

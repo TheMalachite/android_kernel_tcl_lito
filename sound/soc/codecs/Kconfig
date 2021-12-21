@@ -1311,4 +1311,65 @@ config SND_SOC_TPA6130A2
 	tristate "Texas Instruments TPA6130A2 headphone amplifier"
 	depends on I2C
 
+config TCT_SND_COMMON
+	tristate "TCT Sound card changes"
+
+config SND_SOC_TFA98XX
+	tristate "TFA98XX"
+	depends on I2C
+
+config SND_SOC_TFA98XX_CHICAGO
+	tristate "TFA98XX"
+	depends on I2C
+
+config SND_SOC_TFA98XX_MMI_TEST
+	tristate "TFA98XX"
+	depends on SND_SOC_TFA98XX || SND_SOC_TFA98XX_CHICAGO
+	default y
+
+config SND_SMARTPA_AW881XX
+	tristate "AW881XX"
+	depends on I2C
+	select SND_SMARTPA_COMPATIBLE if SND_SOC_TFA98XX
+
+config SND_SMARTPA_COMPATIBLE
+	tristate "Two smartPA compatible"
+
+config TCT_SND_MBHC
+	tristate "TCT MBHC common changes"
+
+config TCT_SND_WSA_CNT
+	tristate "TCT WSA PA can disable by dtsi change"
+
+config TCT_SND_SEATTLE
+	tristate "TCT audio changes for seattle"
+
+config TCT_SND_HAC
+	tristate "TCT audio hac with pa"
+
+config TCT_SND_HPH_SWITCH
+	tristate "TCT eu_us switch vdd"
+	
+config TCT_SND_OTTAWA
+	tristate "TCT audio changes for ottawa"
+
+config SND_SMARTPA_AW881XX_OTTAWA
+	tristate "AW881XX"
+	depends on I2C
+
+
+# begin mod by fuhua.wang for task 9818636 on 2020.01.19
+config SND_SMARTPA_AW881XX_IRVINE
+    tristate "Soc Audio for awinic a881xx series"
+    depends on I2C
+    help
+        This option enables support for aw881xx series Smart PA
+
+config TCT_SND_IRVINE
+	tristate "TCT audio changes for irvine"
+#end   mod by fuhua.wang for task 9818636 on 2020.01.19
+
+config TCT_SND_CHICAGO
+        tristate "TCT audio change for chicago"
+	
 endmenu
