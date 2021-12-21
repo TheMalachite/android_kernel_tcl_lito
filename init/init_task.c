@@ -14,6 +14,9 @@
 
 #include <asm/pgtable.h>
 #include <linux/uaccess.h>
+#ifdef CONFIG_TCT_UI_TURBO
+#include <linux/tct/perf.h>
+#endif
 
 static struct signal_struct init_signals = {
 	.nr_threads	= 1,
@@ -183,6 +186,17 @@ struct task_struct init_task
 #endif
 #ifdef CONFIG_SECURITY
 	.security	= NULL,
+#endif
+#ifdef CONFIG_TCT_UI_TURBO
+	.static_uiturbo = TURBO_NONE,
+	.uiturbo_depth = 0,
+	.dynamic_uiturbo = ATOMIC64_INIT(0),
+	.ui_entry =  LIST_HEAD_INIT(init_task.ui_entry),
+	.enqueue_time = 0,
+	.dynamic_uiturbo_start = 0,
+	.uiturbo_lock = __RAW_SPIN_LOCK_UNLOCKED(init_task.uiturbo_lock),
+	.uiturbo_wo = NULL,
+	.uiturbo_wt = WT_NONE,
 #endif
 };
 EXPORT_SYMBOL(init_task);

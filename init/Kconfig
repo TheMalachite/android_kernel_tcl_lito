@@ -2204,6 +2204,9 @@ config INIT_ALL_POSSIBLE
 	  and have several arch maintainers pursuing me down dark alleys.
 
 source "block/Kconfig"
+source "kernel/cpu_netlink/Kconfig"
+
+
 
 config PREEMPT_NOTIFIERS
 	bool
