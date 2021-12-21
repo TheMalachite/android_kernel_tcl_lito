@@ -44,6 +44,11 @@ bool freezing_slow_path(struct task_struct *p)
 	if (p->flags & (PF_NOFREEZE | PF_SUSPEND_TASK))
 		return false;
 
+        //[TCT-ROM][PERF]Begin Add by jingyuan.wei for freezer on 2019/09/05
+        if (task_no_freeze(p))
+                return false;
+        //[TCT-ROM][PERF]End Add by jingyuan.wei for freezer on 2019/09/05
+
 	if (test_tsk_thread_flag(p, TIF_MEMDIE))
 		return false;
 

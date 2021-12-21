@@ -114,7 +114,11 @@ obj-$(CONFIG_CFI_CLANG) += cfi.o
 obj-$(CONFIG_SHADOW_CALL_STACK) += scs.o
 
 obj-$(CONFIG_PERF_EVENTS) += events/
-
+obj-y += cpu_netlink/
+#//[TCT-ROM]Begin added by xizheng.mo for 9572106 blkio type on 20200716
+#obj-y += cgroup_io_limit.o
+obj-$(CONFIG_TCT_IOLIMIT) += cgroup_io_limit.o
+#//[TCT-ROM]End added by xizheng.mo for 9572106 blkio type on 20200716
 obj-$(CONFIG_USER_RETURN_NOTIFIER) += user-return-notifier.o
 obj-$(CONFIG_PADATA) += padata.o
 obj-$(CONFIG_CRASH_DUMP) += crash_dump.o

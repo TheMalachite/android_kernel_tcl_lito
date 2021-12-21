@@ -30,6 +30,9 @@
 #include <linux/osq_lock.h>
 #include <linux/delay.h>
 
+#ifdef CONFIG_TCT_UI_TURBO
+#include <linux/tct/uiturbo.h>
+#endif
 #ifdef CONFIG_DEBUG_MUTEXES
 # include "mutex-debug.h"
 #else
@@ -258,6 +261,75 @@ void __sched mutex_lock(struct mutex *lock)
 		__mutex_lock_slowpath(lock);
 }
 EXPORT_SYMBOL(mutex_lock);
+#endif
+
+#ifdef CONFIG_TCT_UI_TURBO
+static inline void
+mutex_uiturbo_list_add(struct task_struct *p, struct list_head *entry,
+		       struct list_head *head)
+{
+	if (test_task_uiturbo(p)) {
+		struct list_head *pos;
+		struct mutex_waiter *waiter;
+		list_for_each(pos, head) {
+			waiter = list_entry(pos, struct mutex_waiter, list);
+			if (!test_task_uiturbo(waiter->task)) {
+				list_add(entry, waiter->list.prev);
+				return;
+			}
+		}
+	}
+	list_add_tail(entry, head);
+}
+
+static inline void __mutex_uiturbo_add_waiter(struct mutex *lock,
+					      struct mutex_waiter *waiter,
+					      struct list_head *list)
+{
+	debug_mutex_add_waiter(lock, waiter, current);
+
+	mutex_uiturbo_list_add(current, &waiter->list, list);
+	if (__mutex_waiter_is_first(lock, waiter))
+		__mutex_set_flag(lock, MUTEX_FLAG_WAITERS);
+}
+
+struct task_struct *mutex_lock_owner(void *wo)
+{
+	struct mutex *lock = wo;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,14,0)
+	return __mutex_owner(lock);
+#else
+	return lock->owner;
+#endif
+}
+
+static inline void
+mutex_dynamic_uiturbo_enqueue(struct mutex *lock, struct task_struct *p)
+{
+	struct task_struct *owner = NULL;
+	if (unlikely(!lock)) {
+		return;
+	}
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,14,0)
+	owner = __mutex_owner(lock);
+#else
+	owner = lock->owner;
+#endif
+	if (test_set_dynamic_uiturbo(p) && !lock->ui_dep_task
+	    && owner && !test_task_uiturbo(owner)) {
+		lock->ui_dep_task = owner;
+		dynamic_uiturbo_enqueue(owner, DYNAMIC_UITURBO_MUTEX, p->uiturbo_depth);
+	}
+}
+
+static inline void
+mutex_dynamic_uiturbo_dequeue(struct mutex *lock, struct task_struct *p)
+{
+	if (p && lock && lock->ui_dep_task == p) {
+		dynamic_uiturbo_dequeue(p, DYNAMIC_UITURBO_MUTEX);
+		lock->ui_dep_task = NULL;
+	}
+}
 #endif
 
 /*
@@ -962,8 +1034,12 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
 	lock_contended(&lock->dep_map, ip);
 
 	if (!use_ww_ctx) {
+#ifdef CONFIG_TCT_UI_TURBO
+		__mutex_uiturbo_add_waiter(lock, &waiter, &lock->wait_list);
+#else
 		/* add waiting tasks to the end of the waitqueue (FIFO): */
 		__mutex_add_waiter(lock, &waiter, &lock->wait_list);
+#endif
 
 
 #ifdef CONFIG_DEBUG_MUTEXES
@@ -983,6 +1059,9 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
 
 	waiter.task = current;
 
+#ifdef CONFIG_TCT_UI_TURBO
+	task_set_waiter(current, lock, WT_MUTEX);
+#endif
 	set_current_state(state);
 	for (;;) {
 		/*
@@ -1009,6 +1088,9 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
 			if (ret)
 				goto err;
 		}
+#ifdef CONFIG_TCT_UI_TURBO
+		mutex_dynamic_uiturbo_enqueue(lock, current);
+#endif
 
 		spin_unlock(&lock->wait_lock);
 		schedule_preempt_disabled();
@@ -1037,6 +1119,9 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
 	}
 	spin_lock(&lock->wait_lock);
 acquired:
+#ifdef CONFIG_TCT_UI_TURBO
+	task_clear_waiter(current);
+#endif
 	__set_current_state(TASK_RUNNING);
 
 	if (use_ww_ctx && ww_ctx) {
@@ -1067,6 +1152,9 @@ skip_wait:
 	return 0;
 
 err:
+#ifdef CONFIG_TCT_UI_TURBO
+	task_clear_waiter(current);
+#endif
 	__set_current_state(TASK_RUNNING);
 	mutex_remove_waiter(lock, &waiter, current);
 err_early_kill:
@@ -1241,6 +1329,10 @@ static noinline void __sched __mutex_unlock_slowpath(struct mutex *lock, unsigne
 
 	spin_lock(&lock->wait_lock);
 	debug_mutex_unlock(lock);
+#ifdef CONFIG_TCT_UI_TURBO
+	mutex_dynamic_uiturbo_dequeue(lock, current);
+#endif
+
 	if (!list_empty(&lock->wait_list)) {
 		/* get the first entry from the wait-list: */
 		struct mutex_waiter *waiter =

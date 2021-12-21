@@ -23,6 +23,9 @@
 #include "sched.h"
 
 #include <trace/events/sched.h>
+#ifdef CONFIG_TCT_UI_TURBO
+#include <linux/tct/uiturbo.h>
+#endif
 
 #include "walt.h"
 
@@ -5531,6 +5534,9 @@ enqueue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 		flags = ENQUEUE_WAKEUP;
 	}
 
+#ifdef CONFIG_TCT_UI_TURBO
+	enqueue_uiturbo_thread(rq, p);
+#endif
 	for_each_sched_entity(se) {
 		cfs_rq = cfs_rq_of(se);
 		cfs_rq->h_nr_running++;
@@ -5634,6 +5640,10 @@ static void dequeue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 		}
 		flags |= DEQUEUE_SLEEP;
 	}
+
+#ifdef CONFIG_TCT_UI_TURBO
+	dequeue_uiturbo_thread(rq, p);
+#endif
 
 	for_each_sched_entity(se) {
 		cfs_rq = cfs_rq_of(se);
@@ -8191,6 +8201,12 @@ static void check_preempt_wakeup(struct rq *rq, struct task_struct *p, int wake_
 	find_matching_se(&se, &pse);
 	update_curr(cfs_rq_of(se));
 	BUG_ON(!pse);
+#ifdef CONFIG_TCT_UI_TURBO
+	if (test_task_uiturbo(p)) {
+		trace_sched_uiturbo_event(p, "ui_preempt");
+		goto preempt;
+	}
+#endif
 	if (wakeup_preempt_entity(se, pse) == 1) {
 		/*
 		 * Bias pick_next to pick the sched entity that is
@@ -8281,6 +8297,12 @@ again:
 	} while (cfs_rq);
 
 	p = task_of(se);
+#ifdef CONFIG_TCT_UI_TURBO
+	/*
+	 * pick ui or temp ui thread
+	 */
+	 pick_uiturbo_thread(rq, &p, &se);
+#endif
 
 	/*
 	 * Since we haven't yet done put_prev_entity and if the selected task

@@ -74,6 +74,9 @@
 #include <asm/unistd.h>
 
 #include "uid16.h"
+#if (defined(CONFIG_TCT_THREAD_BOOST) || defined(CONFIG_TCT_CPULOAD_NOTI))
+#include <cpu_netlink/cpu_netlink.h>
+#endif
 
 #ifndef SET_UNALIGN_CTL
 # define SET_UNALIGN_CTL(a, b)	(-EINVAL)
@@ -2421,6 +2424,9 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 	struct task_struct *me = current;
 	unsigned char comm[sizeof(me->comm)];
 	long error;
+#if (defined(CONFIG_TCT_THREAD_BOOST) || defined(CONFIG_TCT_CPULOAD_NOTI))
+	int sock_num;
+#endif
 
 	error = security_task_prctl(option, arg2, arg3, arg4, arg5);
 	if (error != -ENOSYS)
@@ -2479,8 +2485,14 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 		if (strncpy_from_user(comm, (char __user *)arg2,
 				      sizeof(me->comm) - 1) < 0)
 			return -EFAULT;
+#if (defined(CONFIG_TCT_THREAD_BOOST) || defined(CONFIG_TCT_CPULOAD_NOTI))
+		sock_num = iaware_proc_comm_connector(me, comm);
+#endif
 		set_task_comm(me, comm);
 		proc_comm_connector(me);
+#if (defined(CONFIG_TCT_THREAD_BOOST) || defined(CONFIG_TCT_CPULOAD_NOTI))
+		iaware_send_comm_msg(me, sock_num);
+#endif
 		break;
 	case PR_GET_NAME:
 		get_task_comm(comm, me);

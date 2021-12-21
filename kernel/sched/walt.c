@@ -3474,6 +3474,7 @@ void walt_irq_work(struct irq_work *irq_work)
 					new_sched_ravg_window,
 					sched_ravg_window_change_time);
 			sched_ravg_window = new_sched_ravg_window;
+			sched_load_granule = new_sched_ravg_window / NUM_LOAD_INDICES;
 			walt_tunables_fixup();
 		}
 		spin_unlock_irqrestore(&sched_ravg_window_lock, flags);
@@ -3736,7 +3737,7 @@ void sched_set_refresh_rate(enum fps fps)
 		else if (fps == FPS90)
 			display_sched_ravg_window_nr_ticks = 3;
 		else
-			display_sched_ravg_window_nr_ticks = 5;
+			display_sched_ravg_window_nr_ticks = 4;
 
 		sched_window_nr_ticks_change();
 	}

@@ -1667,6 +1667,22 @@ init_task_pid(struct task_struct *task, enum pid_type type, struct pid *pid)
 		task->signal->pids[type] = pid;
 }
 
+#ifdef CONFIG_TCT_UI_TURBO
+#include <linux/tct/uiturbo.h>
+static inline void uiturbo_init_task(struct task_struct *p)
+{
+	p->static_uiturbo = TURBO_NONE;
+	atomic64_set(&(p->dynamic_uiturbo), 0);
+	INIT_LIST_HEAD(&p->ui_entry);
+	p->uiturbo_depth = 0;
+	p->enqueue_time = 0;
+	p->dynamic_uiturbo_start = 0;
+	raw_spin_lock_init(&p->uiturbo_lock);
+	p->uiturbo_wo = NULL;
+	p->uiturbo_wt = WT_NONE;
+}
+#endif
+
 static inline void rcu_copy_process(struct task_struct *p)
 {
 #ifdef CONFIG_PREEMPT_RCU
@@ -2042,6 +2058,9 @@ static __latent_entropy struct task_struct *copy_process(
 	p->sequential_io_avg	= 0;
 #endif
 
+#ifdef CONFIG_TCT_UI_TURBO
+	uiturbo_init_task(p);
+#endif
 	/* Perform scheduler related setup. Assign this task to a CPU. */
 	retval = sched_fork(clone_flags, p);
 	if (retval)

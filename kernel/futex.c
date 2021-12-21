@@ -68,6 +68,9 @@
 #include <linux/freezer.h>
 #include <linux/bootmem.h>
 #include <linux/fault-inject.h>
+#ifdef CONFIG_TCT_UI_TURBO
+#include <linux/tct/uiturbo.h>
+#endif
 
 #include <asm/futex.h>
 
@@ -242,6 +245,9 @@ struct futex_pi_state {
 struct futex_q {
 	struct plist_node list;
 
+#ifdef CONFIG_TCT_UI_TURBO
+	struct task_struct *ui_dep_task;
+#endif
 	struct task_struct *task;
 	spinlock_t *lock_ptr;
 	union futex_key key;
@@ -1434,6 +1440,52 @@ static int futex_lock_pi_atomic(u32 __user *uaddr, struct futex_hash_bucket *hb,
 	return attach_to_pi_owner(uaddr, newval, key, ps);
 }
 
+#ifdef CONFIG_TCT_UI_TURBO
+static inline void futex_dynamic_uiturbo_enqueue(u32 __user *uaddr,
+						 struct futex_q *q)
+{
+	u32 uval;
+	pid_t pid;
+	struct task_struct *p = NULL;
+	if (!uaddr || !q || !test_set_dynamic_uiturbo(current)) {
+		return ;
+	}
+
+	if (get_futex_value_locked(&uval, uaddr)) {
+		return ;
+	}
+
+	pid = uval & FUTEX_TID_MASK;
+	if (pid > 0) {
+		//pr_info_ratelimited("%s: pid = %d\n", __func__, pid);
+		p = find_get_task_by_vpid(pid);
+	}
+	if (!p) {
+		return ;
+	}
+
+	if (!test_task_uiturbo(p)) {
+		q->ui_dep_task = p;
+		dynamic_uiturbo_enqueue(p, DYNAMIC_UITURBO_FUTEX,
+					current->uiturbo_depth);
+	} else
+		put_task_struct(p);
+}
+
+static inline void futex_dynamic_uiturbo_dequeue(struct futex_q *q)
+{
+	struct task_struct *p = q->ui_dep_task;
+	if (likely(!p)) {
+		return;
+	}
+	q->ui_dep_task = NULL;
+	if (test_dynamic_uiturbo(p, DYNAMIC_UITURBO_FUTEX)) {
+		dynamic_uiturbo_dequeue(p, DYNAMIC_UITURBO_FUTEX);
+	}
+	put_task_struct(p);
+}
+#endif
+
 /**
  * __unqueue_futex() - Remove the futex_q from its futex_hash_bucket
  * @q:	The futex_q to unqueue
@@ -1449,6 +1501,9 @@ static void __unqueue_futex(struct futex_q *q)
 		return;
 
 	hb = container_of(q->lock_ptr, struct futex_hash_bucket, lock);
+#ifdef CONFIG_TCT_UI_TURBO
+	futex_dynamic_uiturbo_dequeue(q);
+#endif
 	plist_del(&q->list, &hb->chain);
 	hb_waiters_dec(hb);
 }
@@ -2264,6 +2319,11 @@ static inline void __queue_me(struct futex_q *q, struct futex_hash_bucket *hb)
 	 * the others are woken last, in FIFO order.
 	 */
 	prio = min(current->normal_prio, MAX_RT_PRIO);
+#ifdef CONFIG_TCT_UI_TURBO
+	/* MAX_RT_PRIO for ui threads and MAX_RT_PRIO + 1 for others */
+	if (prio == MAX_RT_PRIO && !test_task_uiturbo(current))
+		++prio;
+#endif
 
 	plist_node_init(&q->list, prio);
 	plist_add(&q->list, &hb->chain);
@@ -2719,8 +2779,13 @@ out:
 	return ret;
 }
 
+#ifdef CONFIG_TCT_UI_TURBO
+static int futex_wait(u32 __user *uaddr, unsigned int flags, u32 val,
+		      ktime_t *abs_time, u32 __user *uaddr2, u32 bitset)
+#else
 static int futex_wait(u32 __user *uaddr, unsigned int flags, u32 val,
 		      ktime_t *abs_time, u32 bitset)
+#endif
 {
 	struct hrtimer_sleeper timeout, *to = NULL;
 	struct restart_block *restart;
@@ -2752,6 +2817,9 @@ retry:
 	if (ret)
 		goto out;
 
+#ifdef CONFIG_TCT_UI_TURBO
+	futex_dynamic_uiturbo_enqueue(uaddr2, &q);
+#endif
 	/* queue_me and wait for wakeup, timeout, or a signal. */
 	futex_wait_queue_me(hb, &q, to);
 
@@ -2782,6 +2850,9 @@ retry:
 	restart->futex.time = *abs_time;
 	restart->futex.bitset = bitset;
 	restart->futex.flags = flags | FLAGS_HAS_TIMEOUT;
+#ifdef CONFIG_TCT_UI_TURBO
+	restart->futex.uaddr2 = uaddr2;
+#endif
 
 	ret = -ERESTART_RESTARTBLOCK;
 
@@ -2805,8 +2876,15 @@ static long futex_wait_restart(struct restart_block *restart)
 	}
 	restart->fn = do_no_restart_syscall;
 
+#ifdef CONFIG_TCT_UI_TURBO
+	return (long)futex_wait(uaddr, restart->futex.flags,
+				restart->futex.val, tp,
+				restart->futex.uaddr2,
+				restart->futex.bitset);
+#else
 	return (long)futex_wait(uaddr, restart->futex.flags,
 				restart->futex.val, tp, restart->futex.bitset);
+#endif
 }
 
 
@@ -3720,7 +3798,11 @@ long do_futex(u32 __user *uaddr, int op, u32 val, ktime_t *timeout,
 		val3 = FUTEX_BITSET_MATCH_ANY;
 		/* fall through */
 	case FUTEX_WAIT_BITSET:
+#ifdef CONFIG_TCT_UI_TURBO
+		return futex_wait(uaddr, flags, val, timeout, uaddr2, val3);
+#else
 		return futex_wait(uaddr, flags, val, timeout, val3);
+#endif
 	case FUTEX_WAKE:
 		val3 = FUTEX_BITSET_MATCH_ANY;
 		/* fall through */

@@ -539,11 +539,19 @@ int schedtune_cpu_boost_with(int cpu, struct task_struct *p)
 	return max(bg->boost_max, task_boost);
 }
 
+#ifdef CONFIG_TCT_UI_TURBO
+#include <linux/tct/uiturbo.h>
+int uiturbo_load_boost __read_mostly = 10;
+#endif
 int schedtune_task_boost(struct task_struct *p)
 {
 	struct schedtune *st;
 	int task_boost;
 
+#ifdef CONFIG_TCT_UI_TURBO
+	if (test_task_uiturbo(p))
+		return uiturbo_load_boost;
+#endif
 	if (unlikely(!schedtune_initialized))
 		return 0;
 

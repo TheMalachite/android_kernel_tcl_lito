@@ -1125,6 +1125,13 @@ struct rq {
 	struct cpuidle_state	*idle_state;
 	int			idle_state_idx;
 #endif
+
+#ifdef CONFIG_TCT_UI_TURBO
+	/* task list for ui thread */
+	struct list_head ui_thread_list;
+	bool uiturbo_balance_active;
+	struct cpu_stop_work uiturbo_balance_work;
+#endif
 };
 
 #ifdef CONFIG_FAIR_GROUP_SCHED

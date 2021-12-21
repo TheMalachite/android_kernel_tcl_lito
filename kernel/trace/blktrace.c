@@ -1992,6 +1992,12 @@ void blk_fill_rwbs(char *rwbs, unsigned int op, int bytes)
 		rwbs[i++] = 'S';
 	if (op & REQ_META)
 		rwbs[i++] = 'M';
+#ifdef CONFIG_TCT_UI_TURBO
+	if (op & REQ_UI)
+		rwbs[i++] = 'U';
+	else if (op & REQ_FG)
+		rwbs[i++] = 'T';
+#endif
 
 	rwbs[i] = '\0';
 }

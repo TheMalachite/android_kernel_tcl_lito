@@ -133,6 +133,7 @@ static unsigned long zero_ul;
 static unsigned long one_ul = 1;
 static unsigned long long_max = LONG_MAX;
 static int one_hundred = 100;
+static int two_hundred = 200;
 static int one_thousand = 1000;
 #ifdef CONFIG_PRINTK
 static int ten_thousand = 10000;
@@ -338,7 +339,103 @@ static int min_extfrag_threshold;
 static int max_extfrag_threshold = 1000;
 #endif
 
+#ifdef CONFIG_TCT_UI_TURBO
+static int min_sched_delay_granularity;
+static int max_sched_delay_granularity = 16;
+static int min_dynamic_uiturbo_sched_granularity;
+static int max_dynamic_uiturbo_sched_granularity = 32;
+static int min_migration_delay_granularity;
+static int max_migration_delay_granulartiy = 16;
+extern int uiturbo_enable;
+extern int uiturbo_load_boost;
+extern int uiturbo_sched_delay_granularity;
+extern int dynamic_uiturbo_sched_granularity;
+extern int uiturbo_migration_delay;
+extern int uiturbo_max_depth;
+extern int uiturbo_max_threads;
+#endif
+
+#ifdef CONFIG_FUSE_PASSTHROUGH_WORKAROUND
+int fuse_passthrough_enable __read_mostly = 1;
+#endif
+
 static struct ctl_table kern_table[] = {
+#ifdef CONFIG_TCT_UI_TURBO
+	{
+		.procname = "uiturbo_enable",
+		.data = &uiturbo_enable,
+		.maxlen = sizeof(unsigned int),
+		.mode = 0644,
+		.proc_handler = proc_dointvec_minmax,
+		.extra1     = &zero,
+		.extra2     = &one,
+	},
+	{
+		.procname   = "uiturbo_load_boost",
+		.data       = &uiturbo_load_boost,
+		.maxlen     = sizeof(int),
+		.mode       = 0644,
+		.proc_handler = proc_dointvec_minmax,
+		.extra1     = &zero,
+		.extra2     = &one_hundred,
+	},
+	{
+		.procname   = "uiturbo_sched_delay_granularity",
+		.data       = &uiturbo_sched_delay_granularity,
+		.maxlen     = sizeof(int),
+		.mode       = 0644,
+		.proc_handler = proc_dointvec_minmax,
+		.extra1     = &min_sched_delay_granularity,
+		.extra2     = &max_sched_delay_granularity,
+	},
+	{
+		.procname   = "dynamic_uiturbo_sched_granularity",
+		.data       = &dynamic_uiturbo_sched_granularity,
+		.maxlen     = sizeof(int),
+		.mode       = 0644,
+		.proc_handler = proc_dointvec_minmax,
+		.extra1     = &min_dynamic_uiturbo_sched_granularity,
+		.extra2     = &max_dynamic_uiturbo_sched_granularity,
+	},
+	{
+		.procname   = "uiturbo_migration_delay",
+		.data       = &uiturbo_migration_delay,
+		.maxlen     = sizeof(int),
+		.mode       = 0644,
+		.proc_handler = proc_dointvec_minmax,
+		.extra1     = &min_migration_delay_granularity,
+		.extra2     = &max_migration_delay_granulartiy,
+	},
+	{
+		.procname   = "uiturbo_max_depth",
+		.data       = &uiturbo_max_depth,
+		.maxlen     = sizeof(int),
+		.mode       = 0644,
+		.proc_handler = proc_dointvec_minmax,
+		.extra1     = &zero,
+		.extra2     = &one_hundred,
+	},
+	{
+		.procname   = "uiturbo_max_threads",
+		.data       = &uiturbo_max_threads,
+		.maxlen     = sizeof(int),
+		.mode       = 0644,
+		.proc_handler = proc_dointvec_minmax,
+		.extra1     = &zero,
+		.extra2     = &one_hundred,
+	},
+#endif
+#ifdef CONFIG_FUSE_PASSTHROUGH_WORKAROUND
+	{
+		.procname   = "fuse_passthrough_enable",
+		.data       = &fuse_passthrough_enable,
+		.maxlen     = sizeof(int),
+		.mode       = 0644,
+		.proc_handler = proc_dointvec_minmax,
+		.extra1     = &zero,
+		.extra2     = &one,
+	},
+#endif
 	{
 		.procname	= "sched_child_runs_first",
 		.data		= &sysctl_sched_child_runs_first,
@@ -1725,7 +1822,16 @@ static struct ctl_table vm_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec_minmax,
 		.extra1		= &zero,
-		.extra2		= &one_hundred,
+		.extra2		= &two_hundred,
+	},
+	{
+		.procname	= "direct_swappiness",
+		.data		= &vm_direct_swappiness,
+		.maxlen		= sizeof(vm_direct_swappiness),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= &zero,
+		.extra2		= &two_hundred,
 	},
 	{
 		.procname       = "want_old_faultaround_pte",

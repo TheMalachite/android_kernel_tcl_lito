@@ -17,6 +17,9 @@
  *  4) Other non-zero value
  *     - a writer owns the lock and other writers can spin on the lock owner.
  */
+#ifdef CONFIG_TCT_UI_TURBO
+#include <linux/tct/uiturbo.h>
+#endif
 #define RWSEM_ANONYMOUSLY_OWNED	(1UL << 0)
 #define RWSEM_READER_OWNED	((struct task_struct *)RWSEM_ANONYMOUSLY_OWNED)
 
@@ -100,6 +103,59 @@ static inline void rwsem_set_reader_owned(struct rw_semaphore *sem)
 #ifdef CONFIG_RWSEM_PRIO_AWARE
 
 #define RWSEM_MAX_PREEMPT_ALLOWED 3000
+#ifdef CONFIG_TCT_UI_TURBO
+static inline bool rwsem_owner_is_writer(struct task_struct *owner)
+{
+	return owner && owner != RWSEM_READER_OWNED;
+}
+
+static inline void
+rwsem_uiturbo_list_add(struct task_struct *p,
+		       struct list_head *entry,
+		       struct list_head *head)
+{
+	if (unlikely(!entry || !head)) {
+		return;
+	}
+	if (test_task_uiturbo(p)) {
+		struct list_head *pos;
+		struct rwsem_waiter *waiter;
+		list_for_each(pos, head) {
+			waiter = list_entry(pos, struct rwsem_waiter, list);
+			if (!test_task_uiturbo(waiter->task)) {
+				list_add(entry, waiter->list.prev);
+				return;
+			}
+		}
+	}
+	list_add_tail(entry, head);
+}
+
+static inline void
+rwsem_dynamic_uiturbo_enqueue(struct task_struct *tsk,
+			      struct task_struct *waiter_task,
+			      struct task_struct *owner,
+			      struct rw_semaphore *sem)
+{
+	if (waiter_task && test_set_dynamic_uiturbo(tsk) &&
+	    rwsem_owner_is_writer(owner) && !test_task_uiturbo(owner) &&
+	    sem && !sem->ui_dep_task) {
+		sem->ui_dep_task = owner;
+		dynamic_uiturbo_enqueue(owner, DYNAMIC_UITURBO_RWSEM,
+					tsk->uiturbo_depth);
+	}
+}
+
+static inline void
+rwsem_dynamic_uiturbo_dequeue(struct rw_semaphore *sem,
+			      struct task_struct *tsk)
+{
+	if (tsk && sem && sem->ui_dep_task == tsk) {
+		dynamic_uiturbo_dequeue(tsk, DYNAMIC_UITURBO_RWSEM);
+		sem->ui_dep_task = NULL;
+	}
+}
+#endif
 
 /*
  * Return true if current waiter is added in the front of the rwsem wait list.
@@ -128,6 +184,20 @@ static inline bool rwsem_list_add_per_prio(struct rwsem_waiter *waiter_in,
 		return true;
 	}
 
+#ifdef CONFIG_TCT_UI_TURBO
+	if (test_task_uiturbo(current)) {
+		list_for_each(pos, head) {
+			waiter = list_entry(pos, struct rwsem_waiter, list);
+			if (!test_task_uiturbo(waiter->task)) {
+				list_add(&waiter_in->list, pos->prev);
+				sem->m_count++;
+				return &waiter_in->list == head->next;
+			}
+		}
+		list_add_tail(&waiter_in->list, head);
+		return false;
+	}
+#endif
 	if (waiter_in->task->prio < DEFAULT_PRIO
 		&& sem->m_count < RWSEM_MAX_PREEMPT_ALLOWED) {
 
@@ -149,7 +219,11 @@ static inline bool rwsem_list_add_per_prio(struct rwsem_waiter *waiter_in,
 static inline bool rwsem_list_add_per_prio(struct rwsem_waiter *waiter_in,
 				    struct rw_semaphore *sem)
 {
+#ifdef CONFIG_TCT_UI_TURBO
+	rwsem_uiturbo_list_add(current, &waiter_in->list, &sem->wait_list);
+#else
 	list_add_tail(&waiter_in->list, &sem->wait_list);
+#endif
 	return false;
 }
 #endif

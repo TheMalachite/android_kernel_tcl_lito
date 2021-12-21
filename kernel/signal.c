@@ -1201,6 +1201,18 @@ out_set:
 	}
 
 	complete_signal(sig, t, type);
+        //[TCT-ROM][PERF]Begin Add by jingyuan.wei for freezer on 2019/09/05
+        if (unlikely(sig == SIGKILL ||  sig == SIGTERM || sig == SIGABRT || sig == SIGQUIT)) {
+                struct task_struct *tsk;
+                rcu_read_lock();
+                for_each_thread(t, tsk) {
+                        task_set_no_freeze(tsk);
+                        if (tsk->state == TASK_UNINTERRUPTIBLE)
+                                wake_up_process(tsk);
+                }
+                rcu_read_unlock();
+        }
+        //[TCT-ROM][PERF]End Added by jingyuan.wei for freezer on 2019/08/02
 ret:
 	trace_signal_generate(sig, info, t, type != PIDTYPE_PID, result);
 	return ret;

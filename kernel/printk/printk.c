@@ -58,6 +58,10 @@
 #include "braille.h"
 #include "internal.h"
 
+#define TCT_TARGET_DMESG_INFO
+#ifdef  TCT_TARGET_DMESG_INFO
+#include <linux/rtc.h>
+#endif
 int console_printk[4] = {
 	CONSOLE_LOGLEVEL_DEFAULT,	/* console_loglevel */
 	MESSAGE_LOGLEVEL_DEFAULT,	/* default_message_loglevel */
@@ -1882,6 +1886,12 @@ int vprintk_store(int facility, int level,
 	size_t text_len;
 	enum log_flags lflags = 0;
 
+#ifdef TCT_TARGET_DMESG_INFO
+	static char textbuf1[LOG_LINE_MAX];
+	struct rtc_time tm;
+	unsigned long sec;
+	int timezone_hours;
+#endif
 	/*
 	 * The printf needs to come first; we need the syslog
 	 * prefix which might be passed-in as a parameter.
@@ -1889,10 +1899,12 @@ int vprintk_store(int facility, int level,
 	text_len = vscnprintf(text, sizeof(textbuf), fmt, args);
 
 	/* mark and strip a trailing newline */
+#ifndef TCT_TARGET_DMESG_INFO
 	if (text_len && text[text_len-1] == '\n') {
 		text_len--;
 		lflags |= LOG_NEWLINE;
 	}
+#endif
 
 	/* strip kernel syslog prefix and extract log level or control flags */
 	if (facility == 0) {
@@ -1915,6 +1927,21 @@ int vprintk_store(int facility, int level,
 			text += 2;
 		}
 	}
+
+#ifdef TCT_TARGET_DMESG_INFO
+	sec = get_seconds();
+	sec -= sys_tz.tz_minuteswest*60;
+	rtc_time_to_tm(sec, &tm);
+	timezone_hours = 0-sys_tz.tz_minuteswest/60;
+	text_len = scnprintf(textbuf1,sizeof(textbuf1),"[%d-%02d-%02d %02d:%02d:%02d GMT%+d] %s",tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+				tm.tm_hour, tm.tm_min, tm.tm_sec, timezone_hours,text);
+	text = textbuf1;
+
+	if (text_len && text[text_len-1] == '\n') {
+		text_len--;
+		lflags |= LOG_NEWLINE;
+	}
+#endif
 
 	if (level == LOGLEVEL_DEFAULT)
 		level = default_message_loglevel;
@@ -3090,7 +3117,13 @@ int kmsg_dump_unregister(struct kmsg_dumper *dumper)
 }
 EXPORT_SYMBOL_GPL(kmsg_dump_unregister);
 
+/* [TCT-SYS][SMARTLOG]Begin added by xiaoyang.ye, 2020-02-09, TASK-10730835 */
+#ifdef CONFIG_SMARTLOG_EMMC
+static bool always_kmsg_dump = true;
+#else
 static bool always_kmsg_dump;
+#endif
+/* [TCT-SYS][SMARTLOG]End added by xiaoyang.ye, TASK-10730835 */
 module_param_named(always_kmsg_dump, always_kmsg_dump, bool, S_IRUGO | S_IWUSR);
 
 /**

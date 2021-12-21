@@ -18,6 +18,9 @@
 #include <asm/tlb.h>
 
 #include <soc/qcom/minidump.h>
+#ifdef CONFIG_TCT_UI_TURBO
+#include <linux/tct/uiturbo.h>
+#endif
 
 #include "../workqueue_internal.h"
 #include "../smpboot.h"
@@ -27,6 +30,7 @@
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/sched.h>
+
 
 DEFINE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 
@@ -3806,6 +3810,9 @@ void scheduler_tick(void)
 #ifdef CONFIG_SMP
 	rq->idle_balance = idle_cpu(cpu);
 	trigger_load_balance(rq);
+#ifdef CONFIG_TCT_UI_TURBO
+	trigger_uiturbo_balance(rq);
+#endif
 #endif
 
 	rcu_read_lock();
@@ -4247,6 +4254,9 @@ static void __sched notrace __schedule(bool preempt)
 		switch_count = &prev->nvcsw;
 	}
 
+#ifdef CONFIG_TCT_UI_TURBO
+	prev->enqueue_time = rq->clock;
+#endif
 	next = pick_next_task(rq, prev, &rf);
 	clear_tsk_need_resched(prev);
 	clear_preempt_need_resched();
@@ -7223,6 +7233,9 @@ void __init sched_init(void)
 		init_cfs_rq(&rq->cfs);
 		init_rt_rq(&rq->rt);
 		init_dl_rq(&rq->dl);
+#ifdef CONFIG_TCT_UI_TURBO
+		uiturbo_init_rq(rq);
+#endif
 #ifdef CONFIG_FAIR_GROUP_SCHED
 		root_task_group.shares = ROOT_TASK_GROUP_LOAD;
 		INIT_LIST_HEAD(&rq->leaf_cfs_rq_list);

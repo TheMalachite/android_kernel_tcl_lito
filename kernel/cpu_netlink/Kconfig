@@ -1,0 +1,5 @@
+config TCT_THREAD_BOOST
+    bool "tct binder thread boost"
+    default y
+    help
+      if set, set binder thread to boost group.
