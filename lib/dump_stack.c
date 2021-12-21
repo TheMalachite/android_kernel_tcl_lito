@@ -44,8 +44,15 @@ void __init dump_stack_set_arch_desc(const char *fmt, ...)
  */
 void dump_stack_print_info(const char *log_lvl)
 {
+#ifdef CONFIG_TCT_UI_TURBO
+	printk("%sCPU: %d PID: %d Comm: %.20s UITURBO: %d-%ld %s%s %s %.*s\n",
+	       log_lvl, raw_smp_processor_id(), current->pid, current->comm,
+	       current->static_uiturbo, atomic64_read(&current->dynamic_uiturbo),
+#else
+
 	printk("%sCPU: %d PID: %d Comm: %.20s %s%s %s %.*s\n",
 	       log_lvl, raw_smp_processor_id(), current->pid, current->comm,
+#endif
 	       kexec_crash_loaded() ? "Kdump: loaded " : "",
 	       print_tainted(),
 	       init_utsname()->release,
