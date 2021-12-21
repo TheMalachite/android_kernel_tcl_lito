@@ -1,3 +1,12 @@
+# Begin modified by hailong.chen for task 9551005 on 2020-06-24
+ifeq ($(CONFIG_TCT_DTS),y)
+    ifeq ($(CONFIG_BUILD_ARM64_DT_OVERLAY),y)
+        dtbo-$(CONFIG_TCT_PROJECT_IRVINE) += irvine-lagoon-qrd-overlay.dtbo
+    irvine-lagoon-qrd-overlay.dtbo-base := irvine-lagoon.dtb
+    else
+        dtb-$(CONFIG_TCT_PROJECT_IRVINE) += irvine-lagoon-qrd.dtb
+    endif
+else
 ifeq ($(CONFIG_BUILD_ARM64_DT_OVERLAY),y)
         dtbo-$(CONFIG_ARCH_KONA) += \
                 kona-cdp-overlay.dtbo \
@@ -66,6 +75,9 @@ dtbo-$(CONFIG_ARCH_LITO) += lito-rumi-overlay.dtbo \
                 lito-v2-atp-lcd-overlay.dtbo \
                 lito-qrd-overlay.dtbo \
                 lito-v2-qrd-overlay.dtbo \
+		lito-seattle-overlay.dtbo \
+                lito-seattlev02-overlay.dtbo \
+                lito-chicago-overlay.dtbo \
                 litomagnus-mtp-overlay.dtbo \
                 litomagnus-cdp-overlay.dtbo \
                 orchid-mtp-overlay.dtbo \
@@ -81,10 +93,14 @@ lito-v2-atp-overlay.dtbo-base := lito-v2.dtb
 lito-v2-atp-lcd-overlay.dtbo-base := lito-v2.dtb
 lito-qrd-overlay.dtbo-base := lito.dtb
 lito-v2-qrd-overlay.dtbo-base := lito-v2.dtb
+lito-seattle-overlay.dtbo-base := lito.dtb
+lito-seattlev02-overlay.dtbo-base := lito.dtb
+lito-chicago-overlay.dtbo-base := lito.dtb
 litomagnus-mtp-overlay.dtbo-base := litomagnus.dtb
 litomagnus-cdp-overlay.dtbo-base := litomagnus.dtb
 orchid-mtp-overlay.dtbo-base := orchid.dtb
 orchid-cdp-overlay.dtbo-base := orchid.dtb
+
 else
 dtb-$(CONFIG_ARCH_LITO) += lito-rumi.dtb \
                 lito-mtp.dtb \
@@ -109,7 +125,8 @@ dtbo-$(CONFIG_ARCH_LAGOON) += \
 		lagoon-mtp-usbc-overlay.dtbo \
 		lagoon-cdp-overlay.dtbo \
 		lagoon-atp-overlay.dtbo \
-		lagoon-qrd-overlay.dtbo
+		lagoon-qrd-overlay.dtbo \
+		lagoon-mtp-overlay_ottawa.dtbo
 
 lagoon-rumi-overlay.dtbo-base := lagoon.dtb
 lagoon-mtp-overlay.dtbo-base := lagoon.dtb
@@ -117,6 +134,7 @@ lagoon-mtp-usbc-overlay.dtbo-base := lagoon.dtb
 lagoon-cdp-overlay.dtbo-base := lagoon.dtb
 lagoon-atp-overlay.dtbo-base := lagoon.dtb
 lagoon-qrd-overlay.dtbo-base := lagoon.dtb
+lagoon-mtp-overlay_ottawa.dtbo-base := lagoon.dtb
 else
 dtb-$(CONFIG_ARCH_LAGOON) += \
 		lagoon-rumi.dtb \
@@ -289,6 +307,8 @@ sdm660-internal-codec-cdp.dtb \
         sdm660-usbc-audio-rcm.dtb
 endif
 
+endif
+# End modified by hailong.chen for task 9551005 on 2020-06-24
 ifeq ($(CONFIG_BUILD_ARM64_DT_OVERLAY),y)
 dtbo-$(CONFIG_ARCH_SDM439) += sdm439-mtp-overlay.dtbo
 

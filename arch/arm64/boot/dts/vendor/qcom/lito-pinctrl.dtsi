@@ -635,6 +635,19 @@
 				drive-strength = <2>; /* 2 MA */
 			};
 		};
+        /*Camera GPIOs vana*/
+		cam_sensor_0_vana: cam_sensor_0_vana {
+			mux {
+				pins = "70";
+				function = "normal";
+			};
+
+			config {
+				pins = "gpio70";
+				power-source = <0>;
+				output-low;
+			};
+		};
 
 		cam_sensor_mclk0_suspend: cam_sensor_mclk0_suspend {
 			/* MCLK0 */
@@ -794,12 +807,12 @@
 		cam_sensor_active_rear_aux: cam_sensor_active_rear_aux {
 			/* RESET REARAUX,DVDD ELDO */
 			mux {
-				pins = "gpio29", "gpio71";
+				pins = "gpio32";
 				function = "gpio";
 			};
 
 			config {
-				pins = "gpio29", "gpio71";
+				pins = "gpio32";
 				bias-disable; /* No PULL */
 				drive-strength = <2>; /* 2 MA */
 			};
@@ -808,12 +821,12 @@
 		cam_sensor_suspend_rear_aux: cam_sensor_suspend_rear_aux {
 			/* RESET REARAUX,DVDD ELDO */
 			mux {
-				pins = "gpio29", "gpio71";
+				pins = "gpio32";
 				function = "gpio";
 			};
 
 			config {
-				pins = "gpio29", "gpio71";
+				pins = "gpio32";
 				bias-pull-down; /* PULL DOWN */
 				drive-strength = <2>; /* 2 MA */
 				output-low;
@@ -854,12 +867,12 @@
 		cam_sensor_active_rear_aux2: cam_sensor_active_rear_aux2 {
 			/* RESET REARAUX2,CSI MUX Sel */
 			mux {
-				pins = "gpio21", "gpio51";
+				pins = "gpio21";
 				function = "gpio";
 			};
 
 			config {
-				pins = "gpio21", "gpio51";
+				pins = "gpio21";
 				bias-disable; /* No PULL */
 				drive-strength = <2>; /* 2 MA */
 			};
@@ -868,12 +881,12 @@
 		cam_sensor_suspend_rear_aux2: cam_sensor_suspend_rear_aux2 {
 			/* RESET REARAUX2, CSI MUX Sel */
 			mux {
-				pins = "gpio21", "gpio51";
+				pins = "gpio21";
 				function = "gpio";
 			};
 
 			config {
-				pins = "gpio21", "gpio51";
+				pins = "gpio21";
 				bias-pull-down; /* PULL DOWN */
 				drive-strength = <2>; /* 2 MA */
 				output-low;
@@ -909,6 +922,34 @@
 			};
 		};
 
+        cam_sensor_active_frontt: cam_sensor_active_frontt {
+			/* RESET REAR2 */
+			mux {
+				pins = "gpio29";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio29";
+				bias-disable; /* No PULL */
+				drive-strength = <2>; /* 2 MA */
+			};
+		};
+
+		cam_sensor_suspend_frontt: cam_sensor_suspend_frontt {
+			/* RESET REAR2 */
+			mux {
+				pins = "gpio29";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio29";
+				bias-pull-down; /* PULL DOWN */
+				drive-strength = <2>; /* 2 MA */
+				output-low;
+			};
+		};
 		cam_sensor_active_front: cam_sensor_active_front {
 			/* RESET FRONT */
 			mux {
@@ -964,6 +1005,62 @@
 					pins = "gpio42", "gpio43";
 					drive-strength = <2>;
 					bias-no-pull;
+				};
+			};
+		};
+
+		/* gpio for fingerprint */
+		focal_fp {
+			focal_pwr_active: focal_pwr_active{
+				mux {
+					pins = "gpio56";
+					function = "gpio";
+				};
+				config {
+					pins = "gpio56";
+					drive-strength = <2>;
+					bias-disable = <0>;
+					output-high;
+				};
+			};
+
+
+			focal_reset_reset: focal_reset_reset{
+				mux {
+					pins = "gpio112";
+					function = "gpio";
+				};
+				config {
+					pins = "gpio112";
+					drive-strength = <2>;
+					bias-disable = <0>;
+					output-low;
+				};
+			};
+
+			focal_reset_active: focal_reset_active{
+				mux {
+					pins = "gpio112";
+					function = "gpio";
+				};
+				config {
+					pins = "gpio112";
+					drive-strength = <2>;
+					bias-disable = <0>;
+					output-high;
+				};
+			};
+
+			focal_irq_active: focal_irq_active {
+				mux {
+					pins = "gpio113";
+					function = "gpio";
+				};
+				config {
+					pins = "gpio113";
+					drive-strength = <2>;
+					bias-disable = <0>;
+					input-enable;
 				};
 			};
 		};
@@ -1059,6 +1156,61 @@
 				};
 			};
 		};
+        // begin add by jliu on 2021/04/19, add for stm tof device
+		stmvl53l1 {
+			stmvl53l1_active: stmvl53l1_active {
+				mux {
+					pins = "gpio84", "gpio85";
+					function = "gpio";
+				};
+
+				config {
+					pins = "gpio84", "gpio85";
+					drive-strength = <8>;
+					bias-pull-up;
+				};
+			};
+
+			stmvl53l1_int_suspend: stmvl53l1_int_suspend {
+				mux {
+					pins = "gpio85";
+					function = "gpio";
+				};
+
+				config {
+					pins = "gpio85";
+					drive-strength = <2>;
+					bias-pull-down;
+				};
+			};
+
+			stmvl53l1_reset_suspend: stmvl53l1_reset_suspend {
+				mux {
+					pins = "gpio84";
+					function = "gpio";
+				};
+
+				config {
+					pins = "gpio84";
+					drive-strength = <2>;
+					bias-pull-down;
+				};
+			};
+
+			stmvl53l1_release: stmvl53l1_release {
+				mux {
+					pins = "gpio83", "gpio85";
+					function = "gpio";
+				};
+
+				config {
+					pins = "gpio84", "gpio85";
+					drive-strength = <2>;
+					bias-disable;
+				};
+			};
+		};
+		// end add by jliu on 2021/04/19, add for stm tof device
 
 		/* SE 1 pin mappings */
 		qupv3_se1_i2c_pins: qupv3_se1_i2c_pins {

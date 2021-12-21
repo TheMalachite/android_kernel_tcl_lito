@@ -558,6 +558,8 @@
 	};
 };
 
+/*[TCTNB][GOODIX-GW9558]MODIFIED-BEGIN by TCT.Ji.Chen */
+/*
 &soc {
 	fingerprint: fpc1020 {
 		compatible = "fpc,fpc1020";
@@ -574,3 +576,5 @@
 		pinctrl-2 = <&fpc_int_low>;
 	};
 };
+*/
+/*[TCTNB][GOODIX-GW9558]MODIFIED-END by TCT.Ji.Chen */

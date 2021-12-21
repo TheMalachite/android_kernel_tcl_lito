@@ -304,12 +304,14 @@
 		};
 	};
 
+/* MODIFIED-BEGIN by linjian.xiang, 2019-08-25, BUG-8470146*/
+#include <dt-bindings/ab-system/ab-system.h>
 	firmware: firmware {
 		android {
 			compatible = "android,firmware";
 			vbmeta {
 				compatible = "android,vbmeta";
-				parts = "vbmeta,boot,system,vendor,dtbo";
+				parts = DEFINED_PARTS;
 			};
 
 			fstab {
@@ -319,12 +321,13 @@
 					dev = "/dev/block/platform/soc/1d84000.ufshc/by-name/vendor";
 					type = "ext4";
 					mnt_flags = "ro,barrier=1,discard";
-					fsmgr_flags = "wait,slotselect,avb";
+					fsmgr_flags = DEFINED_FSMGR_FLAGS;
 					status = "ok";
 				};
 			};
 		};
 	};
+/* MODIFIED-END by linjian.xiang, BUG-8470146*/
 
 	psci {
 		compatible = "arm,psci-1.0";
@@ -531,10 +534,19 @@
 			linux,cma-default;
 		};
 
+		/* [TCTNB-SYS][Pstore]Begin added by Ye Xiushui for task #9895290 on 2020/09/10 */
+		pstore_mem: pstore_region@0xb7e00000 {
+			compatible = "removed-dma-pool";
+			no-map;
+			reg = <0x0 0xb7e00000 0x0 0x400000>;
+			label = "pstore_mem";
+		};
+		/* [TCTNB-SYS][Pstore]End added by Ye Xiushui for task #9895290 on 2020/09/10 */
+
 	};
 
 	chosen {
-		bootargs = "rcupdate.rcu_expedited=1 rcu_nocbs=0-7 earlycon=msm_geni_serial,0x888000 kpti=off";
+		bootargs = "rcupdate.rcu_expedited=1 rcu_nocbs=0-7 kpti=off";
 	};
 
 	soc: soc { };
@@ -2112,7 +2124,7 @@
 
 	qcom,rmtfs_sharedmem@0 {
 		compatible = "qcom,sharedmem-uio";
-		reg = <0x0 0x280000>;
+		reg = <0x0 0x290000>;
 		reg-names = "rmtfs";
 		qcom,client-id = <0x00000001>;
 	};
@@ -3905,24 +3917,24 @@
 	vdd_l1_l2-supply = <&S8C>;
 	vdd_l3_l4-supply = <&BOB>;
 	vdd_l5-supply = <&BOB>;
-	vdd_l6-supply = <&S5A>;
-	vdd_l7-supply = <&S5A>;
+	vdd_l6-supply = <&BOB>;
+	vdd_l7-supply = <&BOB>;
 };
 
 &L1P {
-	regulator-max-microvolt = <1056000>;
-	/* Reduced the headroom by 16mV for AHC */
-	qcom,min-dropout-voltage = <209000>;
-};
-
-&L2P {
 	regulator-max-microvolt = <1104000>;
 	/* Reduced the headroom by 16mV for AHC */
 	qcom,min-dropout-voltage = <209000>;
 };
 
+&L2P {
+	regulator-max-microvolt = <1200000>;
+	/* Reduced the headroom by 16mV for AHC */
+	qcom,min-dropout-voltage = <110000>;
+};
+
 &L3P {
-	regulator-min-microvolt = <2800000>;
+	regulator-min-microvolt = <1800000>;
 	regulator-max-microvolt = <2800000>;
 	qcom,min-dropout-voltage = <136000>;
 };
@@ -3940,7 +3952,8 @@
 };
 
 &L6P {
-	regulator-max-microvolt = <1800000>;
+	regulator-min-microvolt = <2800000>;
+	regulator-max-microvolt = <2800000>;
 	qcom,min-dropout-voltage = <184000>;
 };
 

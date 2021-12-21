@@ -3,7 +3,7 @@
 
 #include <dt-bindings/interrupt-controller/arm-gic.h>
 #include "lito-mtp.dtsi"
-
+#include "lito-seattle.dtsi" // MODIFIED by hongwei.tian, 2019-08-26,BUG-8279237
 / {
 	model = "Qualcomm Technologies, Inc. Lito MTP";
 	compatible = "qcom,lito-mtp", "qcom,lito", "qcom,mtp";

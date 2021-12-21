@@ -85,11 +85,14 @@
 
 	soc {
 		cooling-maps {
+/* MODIFIED-BEGIN by YuBin, for antutu */
+/*
 			soc_cpu6 {
 				trip = <&soc_trip>;
 				cooling-device = <&cpu6_isolate 1 1>;
 			};
-
+*/
+/* MODIFIED-END by YuBin, for antutu */
 			soc_cpu7 {
 				trip = <&soc_trip>;
 				cooling-device = <&cpu7_isolate 1 1>;

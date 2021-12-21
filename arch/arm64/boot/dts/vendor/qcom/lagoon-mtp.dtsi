@@ -3,7 +3,8 @@
 #include <dt-bindings/input/linux-event-codes.h>
 #include <dt-bindings/iio/qcom,spmi-vadc.h>
 #include "lagoon-sde-display.dtsi"
-#include "camera/lagoon-camera-sensor-mtp.dtsi"
+//#include "camera/lagoon-camera-sensor-mtp.dtsi"
+#include "camera/sm7250-camera-sensor-ottawa.dtsi"
 #include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
 #include "lagoon-thermal-overlay.dtsi"
 
@@ -28,9 +29,9 @@
 
 	mtp_batterydata: qcom,battery-data {
 		qcom,batt-id-range-pct = <15>;
-		#include "qg-batterydata-alium-3600mah.dtsi"
-		#include "qg-batterydata-atl466271_3300mAh.dtsi"
-		#include "qg-batterydata-atl436186020H_3780mAh.dtsi"
+		//#include "qg-batterydata-alium-3600mah.dtsi"
+		//#include "qg-batterydata-atl466271_3300mAh.dtsi"
+		//#include "qg-batterydata-atl436186020H_3780mAh.dtsi"
 	};
 };
 
@@ -144,12 +145,12 @@
 	qcom,charger-temp-max = <800>;
 	qcom,smb-temp-max = <800>;
 	qcom,suspend-input-on-debug-batt;
-	qcom,fcc-stepping-enable;
+	//qcom,fcc-stepping-enable;  // NOTE: must not updated here.
 	qcom,fcc-step-delay-ms = <100>;
 	qcom,fcc-step-size-ua = <100000>;
 	qcom,smb-internal-pull-kohm = <0>;
-	qcom,en-skin-therm-mitigation;
-	qcom,hvdcp3-standalone-config;
+	//qcom,en-skin-therm-mitigation;  // MUST not updated with qcom.
+	//qcom,hvdcp3-standalone-config;  // MUST not updated with qcom.
 };
 
 &pm7250b_qg {
@@ -203,7 +204,7 @@
 &sde_dsi {
 	qcom,dsi-default-panel = <&dsi_rm69299_visionox_amoled_video>;
 };
-
+/*[NFC]Delete by na.long on 2020/09/25, 10012147
 &qupv3_se0_i2c {
 	status = "ok";
 	#address-cells = <1>;
@@ -228,7 +229,7 @@
 				&nfc_clk_req_suspend>;
 	};
 };
-
+*/
 &qupv3_se8_i2c {
 	status = "okay";
 	qcom,i2c-touch-active="synaptics,tcm-i2c";
