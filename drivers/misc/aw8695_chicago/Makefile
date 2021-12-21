@@ -1,0 +1,2 @@
+#for AWINIC AW8695 Haptic
+obj-$(CONFIG_AW8695_HAPTIC_CHICAGO) += aw8695.o

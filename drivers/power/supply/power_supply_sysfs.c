@@ -81,6 +81,19 @@ static const char * const power_supply_scope_text[] = {
 	"Unknown", "System", "Device"
 };
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+static const char * const power_supply_usbc_text[] = {
+	"Nothing attached", "Sink attached", "Powered cable w/ sink",
+	"Debug Accessory", "Audio Adapter", "Powered cable w/o sink",
+	"Source Debug Accessory (FMB)",
+	"Source attached (default current)",
+	"Source attached (medium current)",
+	"Source attached (high current)",
+	"Non compliant",
+};
+#else
 static const char * const power_supply_usbc_text[] = {
 	"Nothing attached", "Sink attached", "Powered cable w/ sink",
 	"Debug Accessory", "Audio Adapter", "Powered cable w/o sink",
@@ -89,6 +102,7 @@ static const char * const power_supply_usbc_text[] = {
 	"Source attached (high current)",
 	"Non compliant",
 };
+#endif
 
 static const char * const power_supply_usbc_pr_text[] = {
 	"none", "dual power role", "sink", "source"
@@ -383,7 +397,11 @@ static struct device_attribute power_supply_attrs[] = {
 	POWER_SUPPLY_ATTR(esr_count),
 	POWER_SUPPLY_ATTR(buck_freq),
 	POWER_SUPPLY_ATTR(boost_current),
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	POWER_SUPPLY_ATTR(safety_timer_enable),
+#else
 	POWER_SUPPLY_ATTR(safety_timer_enabled),
+#endif
 	POWER_SUPPLY_ATTR(charge_done),
 	POWER_SUPPLY_ATTR(flash_active),
 	POWER_SUPPLY_ATTR(flash_trigger),
@@ -479,6 +497,25 @@ static struct device_attribute power_supply_attrs[] = {
 	POWER_SUPPLY_ATTR(cp_toggle_switcher),
 	POWER_SUPPLY_ATTR(cp_irq_status),
 	POWER_SUPPLY_ATTR(cp_ilim),
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	POWER_SUPPLY_ATTR(tcl_fixtemp),
+#endif
+#if defined(CONFIG_TCT_OTTAWA_CHG_PATCH) || defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	POWER_SUPPLY_ATTR(dc_status),
+	POWER_SUPPLY_ATTR(fw_current_version),
+	POWER_SUPPLY_ATTR(fw_goal_version),
+	POWER_SUPPLY_ATTR(mtp_start),
+	POWER_SUPPLY_ATTR(mtp_status),
+#endif
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	POWER_SUPPLY_ATTR(dc_start_tx),
+	POWER_SUPPLY_ATTR(sub_bid),
+	POWER_SUPPLY_ATTR(sub_btemp),
+	POWER_SUPPLY_ATTR(sub_bcurrent),
+	POWER_SUPPLY_ATTR(main_bvoltage),
+#endif
 	POWER_SUPPLY_ATTR(irq_status),
 	POWER_SUPPLY_ATTR(parallel_output_mode),
 	POWER_SUPPLY_ATTR(cc_toggle_enable),

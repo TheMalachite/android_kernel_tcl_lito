@@ -77,6 +77,9 @@
 #include <linux/falloc.h>
 #include <linux/uio.h>
 #include <linux/ioprio.h>
+#ifdef CONFIG_TCT_UI_TURBO
+#include <linux/tct/uiturbo.h>
+#endif
 
 #include "loop.h"
 
@@ -2001,13 +2004,24 @@ static void loop_handle_cmd(struct loop_cmd *cmd)
 	const bool write = op_is_write(req_op(rq));
 	struct loop_device *lo = rq->q->queuedata;
 	int ret = 0;
+#ifdef CONFIG_TCT_UI_TURBO
+	int boost = TURBO_NONE;
+#endif
 
 	if (write && (lo->lo_flags & LO_FLAGS_READ_ONLY)) {
 		ret = -EIO;
 		goto failed;
 	}
 
+#ifdef CONFIG_TCT_UI_TURBO
+	if (req_is_ui(rq)) {
+		boost = uiturbo_set_boost(TURBO_UI);
+	}
+#endif
 	ret = do_req_filebacked(lo, rq);
+#ifdef CONFIG_TCT_UI_TURBO
+	uiturbo_set_boost(boost);
+#endif
  failed:
 	/* complete non-aio request */
 	if (!cmd->use_aio || ret) {

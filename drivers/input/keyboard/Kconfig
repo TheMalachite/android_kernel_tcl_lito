@@ -756,4 +756,10 @@ config KEYBOARD_MTK_PMIC
 	  To compile this driver as a module, choose M here: the
 	  module will be called pmic-keys.
 
+config TCT_CLAMSHELL
+       tristate "clamshell status"
+       depends on KEYBOARD_GPIO
+       help 
+        Add interface for hal to read status of hall sensor when boot up.
+
 endif

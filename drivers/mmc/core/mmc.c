@@ -34,6 +34,10 @@
 #define DEFAULT_CMD6_TIMEOUT_MS	500
 #define MIN_CACHE_EN_TIMEOUT_MS 1600
 
+//Begin add by dingting.meng for T-9869946,on 3/9/2020
+const struct mmc_card *ptct_card = NULL;
+//End add by dingting.meng for T-9869946,on 3/9/2020
+
 static const unsigned int tran_exp[] = {
 	10000,		100000,		1000000,	10000000,
 	0,		0,		0,		0
@@ -1989,6 +1993,9 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
 					mmc_hostname(host), __func__, err);
 			goto err;
 		}
+//Begin add by dingting.meng for T-9869946,on 3/9/2020
+        ptct_card = card;
+//End add by dingting.meng for T-9869946,on 3/9/2020
 
 		card->ocr = ocr;
 		card->type = MMC_TYPE_MMC;
@@ -3043,3 +3050,17 @@ err:
 
 	return err;
 }
+
+
+//Begin add by dingting.meng for T-9869946,on 3/9/2020
+void get_dev_info_emmc(char *pdest)
+{
+    if((NULL == pdest) || (NULL == ptct_card))
+    {
+        return;
+    }
+
+    sprintf(pdest, "%08X%08X%08X", ptct_card->raw_cid[0], ptct_card->raw_cid[1],ptct_card->raw_cid[2]);
+}
+EXPORT_SYMBOL(get_dev_info_emmc);
+//End add by dingting.meng for T-9869946,on 3/9/2020

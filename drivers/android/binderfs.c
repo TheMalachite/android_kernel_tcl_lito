@@ -640,6 +640,15 @@ static int init_binder_logs(struct super_block *sb)
 		goto out;
 	}
 
+        //[TCT-ROM][PERF]Begin Add by jingyuan.wei for freezer on 2020/09/14
+        dentry = binderfs_create_file(binder_logs_root_dir, "freeze",
+				      &binder_freeze_fops, NULL);
+	if (IS_ERR(dentry)) {
+		ret = PTR_ERR(dentry);
+		goto out;
+	}
+        //[TCT-ROM][PERF]End Add by jingyuan.wei for freezer on 2020/09/14
+
 	proc_log_dir = binderfs_create_dir(binder_logs_root_dir, "proc");
 	if (IS_ERR(proc_log_dir)) {
 		ret = PTR_ERR(proc_log_dir);

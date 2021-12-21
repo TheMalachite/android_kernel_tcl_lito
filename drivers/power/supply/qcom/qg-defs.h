@@ -6,6 +6,17 @@
 #ifndef __QG_DEFS_H__
 #define __QG_DEFS_H__
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+#define qg_dbg(chip, reason, fmt, ...)			\
+	do {							\
+		if (*chip->debug_mask & (reason))		\
+			pr_err(fmt, ##__VA_ARGS__);	\
+		else						\
+			pr_debug(fmt, ##__VA_ARGS__);	\
+	} while (0)
+#else
 #define qg_dbg(chip, reason, fmt, ...)			\
 	do {							\
 		if (*chip->debug_mask & (reason))		\
@@ -13,6 +24,7 @@
 		else						\
 			pr_debug(fmt, ##__VA_ARGS__);	\
 	} while (0)
+#endif
 
 #define is_between(left, right, value) \
 		(((left) >= (right) && (left) >= (value) \

@@ -283,6 +283,7 @@ static void free_fw_priv(struct fw_priv *fw_priv)
 static char fw_path_para[256];
 static const char * const fw_path[] = {
 	fw_path_para,
+	"/vendor/firmware", // MODIFIED by hongwei.tian, 2020-01-15,BUG-8822111
 	"/lib/firmware/updates/" UTS_RELEASE,
 	"/lib/firmware/updates",
 	"/lib/firmware/" UTS_RELEASE,
@@ -329,6 +330,39 @@ fw_get_filesystem_firmware(struct device *device, struct fw_priv *fw_priv)
 			break;
 		}
 
+#ifdef CONFIG_PXLW_IRIS3
+		if (!strcmp(fw_priv->fw_name, "iris3.fw") && i == 1) {
+			snprintf(path, PATH_MAX, "%s/%s", "/oempersist/display", fw_priv->fw_name); // MODIFIED by hongwei.tian, 2019-06-06,BUG-7808648
+			dev_err(device, "[Iris] Try to load: %s\n", path);
+		}
+		/* MODIFIED-BEGIN by ji.chen, 2019-08-01,BUG-8195210*/
+		if (!strcmp(fw_priv->fw_name, "iris3_default.fw") && i == 1) {
+			snprintf(path, PATH_MAX, "%s/%s", "/vendor/firmware", "iris3.fw");
+			/* MODIFIED-END by ji.chen,BUG-8195210*/
+			dev_err(device, "[Iris] Try to load: %s\n", path);
+		}
+#endif
+		/* end of iris3 */
+
+#ifdef CONFIG_PXLW_IRIS6
+		if ((!strcmp(fw_priv->fw_name, "iris6_ccf1.fw") || !strcmp(fw_priv->fw_name, "iris6_ccf2.fw") ||
+			!strcmp(fw_priv->fw_name, "iris6_ccf3.fw") || !strcmp(fw_priv->fw_name, "iris6.fw")) && (i == 1)) {
+			snprintf(path, PATH_MAX, "%s/%s", "/vendor/firmware", fw_priv->fw_name);
+		}
+
+		if (i == 1) {
+			if (!strcmp(fw_priv->fw_name, "iris6_ccf1b.fw"))
+				snprintf(path, PATH_MAX, "%s/%s", "/oempersist/display", fw_priv->fw_name);
+
+			if (!strcmp(fw_priv->fw_name, "iris6_ccf2b.fw"))
+				snprintf(path, PATH_MAX, "%s/%s", "/oempersist/display", fw_priv->fw_name);
+
+			if (!strcmp(fw_priv->fw_name, "iris6_ccf3b.fw"))
+				snprintf(path, PATH_MAX, "%s/%s", "/oempersist/display", fw_priv->fw_name);
+
+		}
+
+#endif
 		fw_priv->size = 0;
 		rc = kernel_read_file_from_path(path, &fw_priv->data, &size,
 						msize, id);

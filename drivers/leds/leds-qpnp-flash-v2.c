@@ -348,6 +348,16 @@ static int max_ires_curr_ma_table[MAX_IRES_LEVELS] = {
 	FLASH_LED_IRES7P5_MAX_CURR_MA, FLASH_LED_IRES5P0_MAX_CURR_MA
 };
 
+// Defect: 10698727, send uevent when led switch state changed.
+static struct workqueue_struct *led_switch_uevent_wq;
+
+struct led_switch_report_t {
+	struct work_struct send_uevent_work;
+	struct kobject *kobj;
+	bool on;
+};
+static struct led_switch_report_t led_switch_report;
+
 static inline int get_current_reg_code(int target_curr_ma, int ires_ua)
 {
 	if (!ires_ua || !target_curr_ma || (target_curr_ma < (ires_ua / 1000)))
@@ -1796,6 +1806,7 @@ static void qpnp_flash_led_brightness_set(struct led_classdev *led_cdev,
 	struct flash_switch_data *snode = NULL;
 	struct qpnp_flash_led *led = NULL;
 	int rc;
+	bool snode_enabled; // Defect: 10698727, send uevent when led switch state changed.
 
 	/*
 	 * strncmp() must be used here since a prefix comparison is required
@@ -1818,9 +1829,19 @@ static void qpnp_flash_led_brightness_set(struct led_classdev *led_cdev,
 
 	spin_lock(&led->lock);
 	if (snode) {
+		snode_enabled = snode->enabled; // Defect: 10698727, send uevent when led switch state changed.
 		rc = qpnp_flash_led_switch_set(snode, value > 0);
-		if (rc < 0)
+		if (rc < 0) {
 			pr_err("Failed to set flash LED switch rc=%d\n", rc);
+		} else {
+			// Defect: 10698727, send uevent when led switch state changed.
+			if (snode_enabled != snode->enabled) {
+				led_switch_report.kobj = &snode->cdev.dev->kobj;
+				led_switch_report.on = snode->enabled;
+				queue_work(led_switch_uevent_wq, &led_switch_report.send_uevent_work);
+			}
+		}
+
 	} else if (fnode) {
 		qpnp_flash_led_node_set(fnode, value);
 	}
@@ -2950,6 +2971,16 @@ static int qpnp_flash_led_register_interrupts(struct qpnp_flash_led *led)
 	return 0;
 }
 
+// Defect: 10698727, send uevent when led switch state changed.
+static void led_switch_send_uevent(struct work_struct *work)
+{
+	struct led_switch_report_t* lsr = container_of(work, struct led_switch_report_t, send_uevent_work);
+	char *envp[2] = { NULL, NULL };
+	envp[0] = lsr->on ? "EVENT=on" : "EVENT=off";
+	pr_debug("snode_enabled changed: %s, %s\n", lsr->kobj->name, envp[0]);
+	kobject_uevent_env(lsr->kobj, KOBJ_CHANGE, envp);
+}
+
 static int qpnp_flash_led_probe(struct platform_device *pdev)
 {
 	struct qpnp_flash_led *led;
@@ -3086,6 +3117,15 @@ static int qpnp_flash_led_probe(struct platform_device *pdev)
 
 	dev_set_drvdata(&pdev->dev, led);
 
+	// Defect: 10698727, send uevent when led switch state changed.
+	led_switch_uevent_wq = create_singlethread_workqueue("led_switch_uevent_wq");
+	if (unlikely(!led_switch_uevent_wq)) {
+		pr_err("Failed to create workqueue\n");
+		return -ENOMEM;
+	}
+
+	INIT_WORK(&led_switch_report.send_uevent_work, led_switch_send_uevent);
+
 	return 0;
 
 sysfs_fail:
@@ -3117,6 +3157,9 @@ static int qpnp_flash_led_remove(struct platform_device *pdev)
 {
 	struct qpnp_flash_led *led = dev_get_drvdata(&pdev->dev);
 	int i, j;
+
+	// Defect: 10698727, send uevent when led switch state changed.
+	destroy_workqueue(led_switch_uevent_wq);
 
 	for (i = 0; i < led->num_snodes; i++) {
 		for (j = 0; j < ARRAY_SIZE(qpnp_flash_led_attrs); j++)

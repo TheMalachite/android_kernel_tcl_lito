@@ -71,6 +71,7 @@
 #include <linux/security.h>
 #include <linux/spinlock.h>
 #include <linux/ratelimit.h>
+#include <linux/highmem.h>
 
 #include <uapi/linux/android/binder.h>
 #include <uapi/linux/sched/types.h>
@@ -80,6 +81,13 @@
 #include "binder_alloc.h"
 #include "binder_internal.h"
 #include "binder_trace.h"
+
+#ifdef CONFIG_TCT_UI_TURBO
+#include <linux/tct/uiturbo.h>
+#define MAX_UI_WORKS_PROCEEDED 2
+static atomic64_t binder_work_seq;
+static atomic64_t binder_ui_req_num;
+#endif
 
 static HLIST_HEAD(binder_deferred_list);
 static DEFINE_MUTEX(binder_deferred_lock);
@@ -125,6 +133,10 @@ enum {
 	BINDER_DEBUG_INTERNAL_REFS          = 1U << 12,
 	BINDER_DEBUG_PRIORITY_CAP           = 1U << 13,
 	BINDER_DEBUG_SPINLOCKS              = 1U << 14,
+	//[TCT-ROM][PERF]Begin Added by jingyuan.wei for freezer on 2019/08/02
+        BINDER_DEBUG_FREEZE                 = 1U << 15,
+        BINDER_DEBUG_FREEZE_TRANSACTION     = 1U << 16,
+        //[TCT-ROM][PERF]End Added by jingyuan.wei for freezer on 2019/08/02
 };
 static uint32_t binder_debug_mask = BINDER_DEBUG_USER_ERROR |
 	BINDER_DEBUG_FAILED_TRANSACTION | BINDER_DEBUG_DEAD_TRANSACTION;
@@ -245,7 +257,13 @@ struct binder_work {
 		BINDER_WORK_DEAD_BINDER,
 		BINDER_WORK_DEAD_BINDER_AND_CLEAR,
 		BINDER_WORK_CLEAR_DEATH_NOTIFICATION,
+		//[TCT-ROM][PERF]Begin Added by jingyuan.wei for freezer on 2019/08/02
+		BINDER_WORK_FREEZE,
+                //[TCT-ROM][PERF]End Added by jingyuan.wei for freezer on 2019/08/02
 	} type;
+#ifdef CONFIG_TCT_UI_TURBO
+	uint64_t seq;
+#endif
 };
 
 struct binder_error {
@@ -365,6 +383,15 @@ struct binder_ref_death {
 	struct binder_work work;
 	binder_uintptr_t cookie;
 };
+
+//[TCT-ROM][PERF]Begin Added by jingyuan.wei for freezer on 2019/08/02
+struct binder_freeze {
+	struct binder_work work;
+	int pid;
+	int event;
+	int client;
+};
+//[TCT-ROM][PERF]End Added by jingyuan.wei for freezer on 2019/08/02
 
 /**
  * struct binder_ref_data - binder_ref counts and id
@@ -511,6 +538,10 @@ struct binder_proc {
 	bool is_dead;
 
 	struct list_head todo;
+#ifdef CONFIG_TCT_UI_TURBO
+	struct list_head ui_todo;
+	uint32_t ui_count;
+#endif
 	struct binder_stats stats;
 	struct list_head delivered_death;
 	int max_threads;
@@ -523,6 +554,13 @@ struct binder_proc {
 	struct binder_context *context;
 	spinlock_t inner_lock;
 	spinlock_t outer_lock;
+        //[TCT-ROM][PERF]Begin Added by jingyuan.wei for freezer on 2019/08/02
+	bool is_frozen;
+	bool is_processing;
+	bool is_cur_frozen;
+        int has_async_transaction;
+        int processing_type;
+        //[TCT-ROM][PERF]End Added by jingyuan.wei for freezer on 2019/08/02
 	struct dentry *binderfs_entry;
 };
 
@@ -638,6 +676,179 @@ struct binder_object {
 		struct binder_fd_array_object fdao;
 	};
 };
+
+//[TCT-ROM][PERF]Begin Added by jingyuan.wei for freezer on 2019/08/02
+static struct binder_proc *binder_freeze_listener;
+
+#define DESCRIPTOR_OFFSET 16
+#define MAX_DESCIRPTOR_LEN 100
+
+typedef unsigned char32_t;
+typedef unsigned short char16_t;
+
+int32_t k_header = B_PACK_CHARS('S', 'Y', 'S', 'T');
+
+static const char32_t k_byte_mask = 0x000000BF;
+static const char32_t k_byte_mark = 0x00000080;
+
+static const char32_t k_unicode_surrogate_start      = 0x0000D800;
+static const char32_t k_unicode_surrogate_end        = 0x0000DFFF;
+static const char32_t k_unicode_max_codepoint        = 0x0010FFFF;
+
+static const char32_t k_first_byte_mark[] = {
+        0x00000000, 0x00000000, 0x000000C0, 0x000000E0, 0x000000F0
+};
+
+static inline size_t binder_utf32_codepoint_utf8_length(char32_t src_char)
+{
+        if (src_char < 0x00000080) {
+                return 1;
+        } else if (src_char < 0x00000800) {
+                return 2;
+        } else if (src_char < 0x00010000) {
+                if ((src_char < k_unicode_surrogate_start) || (src_char > k_unicode_surrogate_end)) {
+                        return 3;
+                } else {
+                        return 0;
+                }
+        }
+        else if (src_char <= k_unicode_max_codepoint) {
+                return 4;
+        } else {
+                return 0;
+        }
+}
+
+static inline void binder_utf32_codepoint_to_utf8(uint8_t* dst_p, char32_t src_char, size_t bytes)
+{
+        dst_p += bytes;
+        switch (bytes)
+        {
+                case 4: *--dst_p = (uint8_t)((src_char | k_byte_mark) & k_byte_mask); src_char >>= 6;
+                case 3: *--dst_p = (uint8_t)((src_char | k_byte_mark) & k_byte_mask); src_char >>= 6;
+                case 2: *--dst_p = (uint8_t)((src_char | k_byte_mark) & k_byte_mask); src_char >>= 6;
+                case 1: *--dst_p = (uint8_t)(src_char | k_first_byte_mark[bytes]);
+        }
+}
+
+ssize_t binder_utf16_to_utf8_length(const char16_t *src, size_t src_len)
+{
+        size_t ret = 0;
+        const char16_t* const end = src + src_len;
+
+        if (src == NULL || src_len == 0) {
+                return -1;
+        }
+
+        while (src < end) {
+                size_t char_len;
+                if ((*src & 0xFC00) == 0xD800 && (src + 1) < end
+                                && (*(src + 1) & 0xFC00) == 0xDC00) {
+                        char_len = 4;
+                        src += 2;
+                } else {
+                        char_len = binder_utf32_codepoint_utf8_length((char32_t)*src++);
+                }
+                ret += char_len;
+        }
+        return ret;
+}
+
+void binder_utf16_to_utf8(const char16_t* src, size_t src_len, char* dst, size_t dst_len)
+{
+        const char16_t* cur_utf16 = src;
+        const char16_t* const end_utf16 = src + src_len;
+        char *cur = dst;
+
+        if (src == NULL || src_len == 0 || dst == NULL) {
+                return;
+        }
+
+        while (cur_utf16 < end_utf16) {
+                char32_t utf32;
+                size_t len;
+                if((*cur_utf16 & 0xFC00) == 0xD800 && (cur_utf16 + 1) < end_utf16
+                                && (*(cur_utf16 + 1) & 0xFC00) == 0xDC00) {
+                        utf32 = (*cur_utf16++ - 0xD800) << 10;
+                        utf32 |= *cur_utf16++ - 0xDC00;
+                        utf32 += 0x10000;
+                } else {
+                        utf32 = (char32_t) *cur_utf16++;
+                }
+                len = binder_utf32_codepoint_utf8_length(utf32);
+                binder_utf32_codepoint_to_utf8((uint8_t*)cur, utf32, len);
+                cur += len;
+                dst_len -= len;
+        }
+        *cur = '\0';
+}
+
+bool binder_validate_read_data(size_t data_pos, binder_size_t* objects, size_t objects_size, size_t* next_object_hint, bool* objects_sorted, size_t upper_bound)
+{
+        binder_size_t* iter0;
+        binder_size_t* curr_obj;
+        binder_size_t* prev_obj;
+
+        if (*objects_sorted || objects_size <= 1) {
+data_sorted:
+                if (*next_object_hint < objects_size && upper_bound > objects[*next_object_hint]) {
+                        size_t next_object = *next_object_hint;
+                        do {
+                                if (data_pos < objects[next_object] + sizeof(struct flat_binder_object)) {
+                                        return false;
+                                }
+                                next_object++;
+                        } while (next_object < objects_size && upper_bound > objects[next_object]);
+                        *next_object_hint = next_object;
+                }
+                return true;
+        }
+        curr_obj = objects + objects_size - 1;
+        prev_obj = curr_obj;
+        while (curr_obj > objects) {
+                prev_obj--;
+                if(*prev_obj > *curr_obj) {
+                        goto data_unsorted;
+                }
+                curr_obj--;
+        }
+        *objects_sorted = true;
+        goto data_sorted;
+
+data_unsorted:
+        for (iter0 = objects + 1; iter0 < objects + objects_size; iter0++) {
+                binder_size_t temp = *iter0;
+                binder_size_t* iter1 = iter0 - 1;
+                while (iter1 >= objects && *iter1 > temp) {
+                        *(iter1 + 1) = *iter1;
+                        iter1--;
+                }
+                *(iter1 + 1) = temp;
+        }
+        *next_object_hint = 0;
+        *objects_sorted = true;
+        goto data_sorted;
+}
+
+int binder_read_int_32(uint8_t* data, size_t data_size, size_t* data_pos, binder_size_t* objects, size_t objects_size, size_t* next_object_hint, bool* objects_sorted)
+{
+        if ((*data_pos + 4) <= data_size) {
+                void* result;
+                if (objects_size > 0) {
+                        if(!binder_validate_read_data(*data_pos, objects, objects_size, next_object_hint, objects_sorted, *data_pos + 4)) {
+                                *data_pos += 4;
+                                return 0;
+                        }
+                }
+
+                result = data + *data_pos;
+                *data_pos += 4;
+                return *(int *)(result);
+        } else {
+                return 0;
+        }
+}
+//[TCT-ROM][PERF]End Added by jingyuan.wei for freezer on 2019/08/02
 
 /**
  * binder_proc_lock() - Acquire outer lock for given binder_proc
@@ -806,6 +1017,9 @@ binder_enqueue_work_ilocked(struct binder_work *work,
 {
 	BUG_ON(target_list == NULL);
 	BUG_ON(work->entry.next && !list_empty(&work->entry));
+#ifdef CONFIG_TCT_UI_TURBO
+	work->seq = (uint64_t)atomic64_inc_return(&binder_work_seq);
+#endif
 	list_add_tail(&work->entry, target_list);
 }
 
@@ -897,6 +1111,71 @@ static struct binder_work *binder_dequeue_work_head_ilocked(
 	return w;
 }
 
+#ifdef CONFIG_TCT_UI_TURBO
+static int binder_count_show(struct seq_file *m, void *unused)
+{
+	seq_printf(m, "Total ui request: %llu\n",
+		   (unsigned long long)atomic64_read(&binder_ui_req_num));
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(binder_count);
+
+static inline bool binder_proc_worklist_empty_ilocked(struct binder_proc *proc)
+{
+	return binder_worklist_empty_ilocked(&proc->todo) &&
+	    binder_worklist_empty_ilocked(&proc->ui_todo);
+}
+
+static inline struct list_head *
+binder_proc_select_worklist_ilocked(struct binder_proc *proc)
+{
+	if (binder_worklist_empty_ilocked(&proc->ui_todo)) {
+		proc->ui_count = 0;
+
+		/* Use 'todo' list when 'fg_todo' is empty */
+		return &proc->todo;
+	}
+
+	if (proc->ui_count >= MAX_UI_WORKS_PROCEEDED) {
+		proc->ui_count = 0;
+
+		if (!binder_worklist_empty_ilocked(&proc->todo)) {
+			struct binder_work *ui_w;
+			struct binder_work *w;
+
+			ui_w = list_first_entry(&proc->ui_todo,
+						struct binder_work, entry);
+			w = list_first_entry(&proc->todo,
+					     struct binder_work, entry);
+
+			if (w->seq < ui_w->seq)
+				return &proc->todo;
+		}
+	}
+
+	proc->ui_count++;
+	return &proc->ui_todo;
+}
+
+static inline void
+binder_thread_check_and_set_dynamic_uiturbo(struct binder_thread *thread,
+					    struct binder_thread *from,
+					    bool oneway)
+{
+	if (!oneway && from && test_set_dynamic_uiturbo(from->task) &&
+	    !test_task_uiturbo(thread->task))
+		dynamic_uiturbo_enqueue(thread->task, DYNAMIC_UITURBO_BINDER,
+					from->task->uiturbo_depth);
+}
+
+static inline void
+binder_thread_check_and_remove_dynamic_uiturbo(struct binder_thread *thread)
+{
+	if (test_dynamic_uiturbo(thread->task, DYNAMIC_UITURBO_BINDER))
+		dynamic_uiturbo_dequeue(thread->task, DYNAMIC_UITURBO_BINDER);
+}
+#endif
+
 static void
 binder_defer_work(struct binder_proc *proc, enum binder_deferred_state defer);
 static void binder_free_thread(struct binder_thread *thread);
@@ -969,7 +1248,11 @@ static bool binder_has_work_ilocked(struct binder_thread *thread,
 	return thread->process_todo ||
 		thread->looper_need_return ||
 		(do_proc_work &&
+#ifdef CONFIG_TCT_UI_TURBO
+		 !binder_proc_worklist_empty_ilocked(thread->proc));
+#else
 		 !binder_worklist_empty_ilocked(&thread->proc->todo));
+#endif
 }
 
 static bool binder_has_work(struct binder_thread *thread, bool do_proc_work)
@@ -2817,6 +3100,116 @@ static int binder_fixup_parent(struct binder_transaction *t,
 	return 0;
 }
 
+//[TCT-ROM][PERF]Begin Added by jingyuan.wei for freezer on 2019/08/02
+static int binder_proc_freeze(struct binder_proc *proc)
+{
+	struct rb_node *n;
+	struct binder_thread *thread;
+	struct binder_work *w;
+	struct binder_transaction *t;
+	int client;
+
+	for (n = rb_first(&proc->threads); n != NULL; n = rb_next(n)) {
+	        thread = rb_entry(n, struct binder_thread,rb_node);
+	        if (thread->transaction_stack && thread->transaction_stack->to_thread == thread
+	                         && thread->transaction_stack->from != NULL) {
+	                client = thread->transaction_stack->from->proc->pid;
+                        binder_debug(BINDER_DEBUG_FREEZE,"%d need unfreeze, client:%d line:%d\n",proc->pid,client,__LINE__);
+		        return client;
+	        }
+	        list_for_each_entry(w, &thread->todo, entry) {
+	                if (w->type == BINDER_WORK_TRANSACTION) {
+		                 t = container_of(w, struct binder_transaction, work);
+		                 if (t->need_reply && t->from != NULL) {
+		                         client = t->from->proc->pid;
+			                 binder_debug(BINDER_DEBUG_FREEZE,"%d need unfreeze, client:%d line:%d\n",proc->pid,client,__LINE__);
+			                 return client;
+		                 }
+	                }
+	        }
+	}
+
+	list_for_each_entry(w, &proc->todo, entry) {
+	        if (w->type == BINDER_WORK_TRANSACTION) {
+	                t = container_of(w, struct binder_transaction, work);
+	                if (t->need_reply && t->from != NULL) {
+		                client = t->from->proc->pid;
+		                binder_debug(BINDER_DEBUG_FREEZE,"%d need unfreeze, client:%d line:%d\n",proc->pid,client,__LINE__);
+		                return client;
+                        }
+                }
+        }
+
+#ifdef CONFIG_TCT_UI_TURBO
+        list_for_each_entry(w, &proc->ui_todo, entry) {
+	        if (w->type == BINDER_WORK_TRANSACTION) {
+	                t = container_of(w, struct binder_transaction, work);
+	                if (t->need_reply && t->from != NULL) {
+		                client = t->from->proc->pid;
+		                binder_debug(BINDER_DEBUG_FREEZE,"%d need unfreeze, client:%d line:%d\n",proc->pid,client,__LINE__);
+		                return client;
+                        }
+                }
+        }
+#endif
+
+        if (proc->has_async_transaction > 0) {
+                client = -1;
+                binder_debug(BINDER_DEBUG_FREEZE,"%d need unfreeze, client:%d line:%d\n",proc->pid,client,__LINE__);
+                return client;
+        }
+
+	return 0;
+}
+
+static struct binder_proc *binder_get_proc(int pid, struct binder_proc *listener)
+{
+	struct binder_proc *proc = NULL;
+
+	if (!listener) {
+		binder_user_error("freeze listener is null");
+		return NULL;
+	}
+
+	if (!listener->context) {
+		binder_user_error("context is null");
+		return NULL;
+	}
+
+	mutex_lock(&binder_procs_lock);
+	hlist_for_each_entry(proc, &binder_procs, proc_node) {
+		if (proc->pid == pid && !proc->is_dead
+			&& proc->context == listener->context) {
+			break;
+		}
+	}
+	mutex_unlock(&binder_procs_lock);
+
+	return proc;
+}
+
+static void binder_enquene_freeze_work(struct binder_proc *proc, int pid, int event, int client)
+{
+	struct binder_freeze *freeze = NULL;
+
+	freeze = kzalloc(sizeof(*freeze), GFP_KERNEL);
+	binder_inner_proc_lock(proc);
+	if (proc->is_dead) {
+	        binder_user_error("binder don't enquene freeze work,because proc is dead");
+		binder_inner_proc_unlock(proc);
+		return;
+	}
+	binder_debug(BINDER_DEBUG_FREEZE,"binder enquene freeze work pid:%d event:%d client:%d\n",pid,event,client);
+	freeze->pid = pid;
+	freeze->event = event;
+	freeze->client = client;
+	freeze->work.type = BINDER_WORK_FREEZE;
+	binder_enqueue_work_ilocked(&freeze->work, &proc->todo);
+	binder_wakeup_proc_ilocked(proc);
+	binder_inner_proc_unlock(proc);
+}
+//[TCT-ROM][PERF]End Added by jingyuan.wei for freezer on 2019/08/02
+
 /**
  * binder_proc_transaction() - sends a transaction to a process and wakes it up
  * @t:		transaction to send
@@ -2842,6 +3235,10 @@ static bool binder_proc_transaction(struct binder_transaction *t,
 	struct binder_priority node_prio;
 	bool oneway = !!(t->flags & TF_ONE_WAY);
 	bool pending_async = false;
+        //[TCT-ROM][PERF]Begin Added by jingyuan.wei for freezer on 2019/08/02
+	bool freeze_change = false;
+	int freeze_client;
+        //[TCT-ROM][PERF]End Added by jingyuan.wei for freezer on 2019/08/02
 
 	BUG_ON(!node);
 	binder_node_lock(node);
@@ -2872,8 +3269,20 @@ static bool binder_proc_transaction(struct binder_transaction *t,
 		binder_transaction_priority(thread->task, t, node_prio,
 					    node->inherit_rt);
 		binder_enqueue_thread_work_ilocked(thread, &t->work);
+#ifdef CONFIG_TCT_UI_TURBO
+		binder_thread_check_and_set_dynamic_uiturbo(thread, t->from,
+							    oneway);
+#endif
 	} else if (!pending_async) {
+#ifdef CONFIG_TCT_UI_TURBO
+		if (!oneway && test_task_uiturbo(current)) {
+			binder_enqueue_work_ilocked(&t->work, &proc->ui_todo);
+			atomic64_inc(&binder_ui_req_num);
+		} else
+			binder_enqueue_work_ilocked(&t->work, &proc->todo);
+#else
 		binder_enqueue_work_ilocked(&t->work, &proc->todo);
+#endif
 	} else {
 		binder_enqueue_work_ilocked(&t->work, &node->async_todo);
 	}
@@ -2881,8 +3290,31 @@ static bool binder_proc_transaction(struct binder_transaction *t,
 	if (!pending_async)
 		binder_wakeup_thread_ilocked(proc, thread, !oneway /* sync */);
 
+        //[TCT-ROM][PERF]Begin Added by jingyuan.wei for freezer on 2019/08/02
+        if (oneway && !pending_async) {
+                proc->has_async_transaction++;
+        }
+
+        if (binder_freeze_listener &&
+                        proc->is_frozen &&
+                        proc->is_cur_frozen &&
+                        !proc->is_processing) {
+                proc->is_cur_frozen = false;
+                proc->is_processing = true;
+                proc->processing_type = __LINE__;
+                freeze_change = true;
+                freeze_client = oneway ? -1 : t->from->proc->pid;
+                binder_debug(BINDER_DEBUG_FREEZE,"%d:%d need unfreeze pid:%d client:%d\n line:%d",oneway?-1:t->from->proc->pid,oneway?-1:t->from->pid,proc->pid,freeze_client,__LINE__);
+        }
+        //[TCT-ROM][PERF]End Added by jingyuan.wei for freezer on 2019/08/02
+
 	binder_inner_proc_unlock(proc);
 	binder_node_unlock(node);
+	
+        //[TCT-ROM][PERF]Begin Added by jingyuan.wei for freezer on 2019/08/02
+	if (freeze_change)
+		binder_enquene_freeze_work(binder_freeze_listener,proc->pid,0,freeze_client);
+        //[TCT-ROM][PERF]End Added by jingyuan.wei for freezer on 2019/08/02
 
 	return true;
 }
@@ -2968,6 +3400,10 @@ static void binder_transaction(struct binder_proc *proc,
 	e->context_name = proc->context->name;
 
 	if (reply) {
+		//[TCT-ROM][PERF]Begin Added by jingyuan.wei for freezer on 2019/08/02
+		bool freeze_change = false;
+		int freeze_client;
+                //[TCT-ROM][PERF]End Added by jingyuan.wei for freezer on 2019/08/02
 		binder_inner_proc_lock(proc);
 		in_reply_to = thread->transaction_stack;
 		if (in_reply_to == NULL) {
@@ -2996,7 +3432,25 @@ static void binder_transaction(struct binder_proc *proc,
 			goto err_bad_call_stack;
 		}
 		thread->transaction_stack = in_reply_to->to_parent;
+		//[TCT-ROM][PERF]Begin Added by jingyuan.wei for freezer on 2019/08/02
+		if (binder_freeze_listener && proc->is_frozen) {
+			int client = binder_proc_freeze(proc);
+                        bool is_cur_frozen = client == 0 ? true : false;
+			if (is_cur_frozen != proc->is_cur_frozen && !proc->is_processing) {
+                                proc->is_cur_frozen = is_cur_frozen;
+				proc->is_processing = true;
+                                proc->processing_type = __LINE__;
+			        freeze_change = true;
+				freeze_client = client;
+				binder_debug(BINDER_DEBUG_FREEZE,"%d:%d need %sfreeze pid:%d client:%d line:%d\n",proc->pid,thread->pid,proc->is_cur_frozen?"":"un",proc->pid,client,__LINE__);
+			}
+		}
+                //[TCT-ROM][PERF]End Added by jingyuan.wei for freezer on 2019/08/02
 		binder_inner_proc_unlock(proc);
+		//[TCT-ROM][PERF]Begin Added by jingyuan.wei for freezer on 2019/08/02
+		if (freeze_change)
+			binder_enquene_freeze_work(binder_freeze_listener,proc->pid,proc->is_cur_frozen ? 1 : 0,freeze_client);
+                //[TCT-ROM][PERF]End Added by jingyuan.wei for freezer on 2019/08/02
 		target_thread = binder_get_txn_from_and_acq_inner(in_reply_to);
 		if (target_thread == NULL) {
 			return_error = BR_DEAD_REPLY;
@@ -3286,6 +3740,52 @@ static void binder_transaction(struct binder_proc *proc,
 		return_error_line = __LINE__;
 		goto err_copy_data_failed;
 	}
+        //[TCT-ROM][PERF]Begin Added by jingyuan.wei for freezer on 2019/08/02
+        binder_inner_proc_lock(target_proc);
+        if ((binder_debug_mask & BINDER_DEBUG_FREEZE_TRANSACTION) && target_proc->is_frozen && !reply) {
+                struct page *page, *page2;
+                pgoff_t pgoff, pgoff2;
+
+                page = binder_alloc_get_page_freeze(&target_proc->alloc, t->buffer, 0, &pgoff);
+                page2 = binder_alloc_get_page_freeze(&target_proc->alloc, t->buffer, ALIGN(tr->data_size, sizeof(void *)), &pgoff2);
+                if (pgoff + DESCRIPTOR_OFFSET < PAGE_SIZE && pgoff2 + tr->offsets_size < PAGE_SIZE) {
+                        uint8_t* data;
+                        size_t data_size = tr->data_size;
+                        size_t data_pos = 0;
+                        binder_size_t* objects;
+                        size_t objects_size = tr->offsets_size/sizeof(binder_size_t);
+                        size_t next_object_hint = 0;
+                        bool objects_sorted = false;
+
+                        int header;
+                        int len;
+                        char16_t* str;
+                        int size;
+
+                        data = kmap(page) + pgoff;
+                        objects = kmap(page2) + pgoff2;
+
+                        binder_read_int_32(data, data_size, &data_pos, objects, objects_size, &next_object_hint, &objects_sorted);
+                        binder_read_int_32(data, data_size, &data_pos, objects, objects_size, &next_object_hint, &objects_sorted);
+                        header = binder_read_int_32(data, data_size, &data_pos, objects, objects_size, &next_object_hint, &objects_sorted);
+                        len = binder_read_int_32(data, data_size, &data_pos, objects, objects_size, &next_object_hint, &objects_sorted);
+
+                        if (len > 0 && pgoff + DESCRIPTOR_OFFSET + len < PAGE_SIZE && header == k_header) {
+                                str = (char16_t*)(data + DESCRIPTOR_OFFSET);
+                                size = binder_utf16_to_utf8_length(str, len) + 1;
+                                if (size < MAX_DESCIRPTOR_LEN) {
+                                        char descriptor[MAX_DESCIRPTOR_LEN];
+                                        binder_utf16_to_utf8(str, len, descriptor, size);
+                                        trace_binder_freeze_transaction(proc->pid, target_proc->pid, descriptor, t->code, !!(t->flags & TF_ONE_WAY));
+                                }
+                        }
+
+                        kunmap(page);
+                        kunmap(page2);
+                }
+	}
+        binder_inner_proc_unlock(target_proc);
+        //[TCT-ROM][PERF]End Added by jingyuan.wei for freezer on 2019/08/02
 	if (!IS_ALIGNED(tr->offsets_size, sizeof(binder_size_t))) {
 		binder_user_error("%d:%d got transaction with invalid offsets size, %lld\n",
 				proc->pid, thread->pid, (u64)tr->offsets_size);
@@ -3500,6 +4000,10 @@ static void binder_transaction(struct binder_proc *proc,
 	t->work.type = BINDER_WORK_TRANSACTION;
 
 	if (reply) {
+		//[TCT-ROM][PERF]Begin Added by jingyuan.wei for freezer on 2019/08/02
+		bool freeze_change = false;
+		int freeze_client;
+                //[TCT-ROM][PERF]End Added by jingyuan.wei for freezer on 2019/08/02
 		binder_enqueue_thread_work(thread, tcomplete);
 		binder_inner_proc_lock(target_proc);
 		if (target_thread->is_dead) {
@@ -3509,10 +4013,37 @@ static void binder_transaction(struct binder_proc *proc,
 		BUG_ON(t->buffer->async_transaction != 0);
 		binder_pop_transaction_ilocked(target_thread, in_reply_to);
 		binder_enqueue_thread_work_ilocked(target_thread, &t->work);
-		binder_inner_proc_unlock(target_proc);
-
+		//[TCT-ROM][PERF]Begin Added by jingyuan.wei for freezer on 2019/08/02
+                if (binder_freeze_listener &&
+                                target_proc->is_frozen &&
+                                target_proc->is_cur_frozen &&
+                                !target_proc->is_processing &&
+                                target_thread->transaction_stack &&
+                                target_thread->transaction_stack->to_thread == target_thread) {
+			target_proc->is_cur_frozen = false;
+			target_proc->is_processing = true;
+                        target_proc->processing_type = __LINE__;
+			freeze_change = true;
+			freeze_client = target_thread->transaction_stack->from->proc->pid;
+			binder_debug(BINDER_DEBUG_FREEZE,"%d:%d need unfreeze pid:%d client:%d line:%d\n",proc->pid,thread->pid,target_proc->pid,freeze_client,__LINE__);
+		}
+                //[TCT-ROM][PERF]End Added by jingyuan.wei for freezer on 2019/08/02
+ 		binder_inner_proc_unlock(target_proc);
+		//[TCT-ROM][PERF]Begin Added by jingyuan.wei for freezer on 2019/08/02
+		if (freeze_change)
+			binder_enquene_freeze_work(binder_freeze_listener,target_proc->pid,0,freeze_client);
+                //[TCT-ROM][PERF]End Added by jingyuan.wei for freezer on 2019/08/02
+#ifdef CONFIG_SCHED_WALT
+		if (target_thread->task && target_thread->task->signal &&
+			(target_thread->task->signal->oom_score_adj <= 0)) {
+			target_thread->task->low_latency = true;
+		}
+#endif
 		wake_up_interruptible_sync(&target_thread->wait);
 		binder_restore_priority(current, in_reply_to->saved_priority);
+#ifdef CONFIG_TCT_UI_TURBO
+		binder_thread_check_and_remove_dynamic_uiturbo(thread);
+#endif
 		binder_free_transaction(in_reply_to);
 	} else if (!(t->flags & TF_ONE_WAY)) {
 		BUG_ON(t->buffer->async_transaction != 0);
@@ -3832,6 +4363,10 @@ static int binder_thread_write(struct binder_proc *proc,
 			if (buffer->async_transaction && buffer->target_node) {
 				struct binder_node *buf_node;
 				struct binder_work *w;
+				//[TCT-ROM][PERF]Begin Added by jingyuan.wei for freezer on 2019/08/02
+                                bool freeze_change = false;
+                                int freeze_client;
+                                //[TCT-ROM][PERF]End Added by jingyuan.wei for freezer on 2019/08/02
 
 				buf_node = buffer->target_node;
 				binder_node_inner_lock(buf_node);
@@ -3841,12 +4376,33 @@ static int binder_thread_write(struct binder_proc *proc,
 						&buf_node->async_todo);
 				if (!w) {
 					buf_node->has_async_transaction = false;
+					//[TCT-ROM][PERF]Begin Added by jingyuan.wei for freezer on 2019/08/02
+                                        proc->has_async_transaction--;
+                                        //[TCT-ROM][PERF]End Added by jingyuan.wei for freezer on 2019/08/02
 				} else {
 					binder_enqueue_work_ilocked(
 							w, &proc->todo);
 					binder_wakeup_proc_ilocked(proc);
 				}
+				//[TCT-ROM][PERF]Begin Added by jingyuan.wei for freezer on 2019/08/02
+                                if (binder_freeze_listener && proc->is_frozen) {
+                                        int client = binder_proc_freeze(proc);
+                                        bool is_cur_frozen = client == 0 ? true : false;
+                                        if (is_cur_frozen != proc->is_cur_frozen && !proc->is_processing) {
+                                                proc->is_cur_frozen = is_cur_frozen;
+                                                proc->is_processing = true;
+                                                proc->processing_type = __LINE__;
+                                                freeze_change = true;
+                                                freeze_client = is_cur_frozen ? 0 : -1;
+                                                binder_debug(BINDER_DEBUG_FREEZE,"%d:%d need %sfreeze pid:%d client:%d line:%d\n",proc->pid,thread->pid,proc->is_cur_frozen?"":"un",proc->pid,freeze_client,__LINE__);
+                                        }
+                                }
+                                //[TCT-ROM][PERF]End Added by jingyuan.wei for freezer on 2019/08/02
 				binder_node_inner_unlock(buf_node);
+				//[TCT-ROM][PERF]Begin Added by jingyuan.wei for freezer on 2019/08/02
+                                if (freeze_change)
+                                        binder_enquene_freeze_work(binder_freeze_listener,proc->pid,proc->is_cur_frozen ? 1 : 0,freeze_client);
+                                //[TCT-ROM][PERF]End Added by jingyuan.wei for freezer on 2019/08/02
 			}
 			trace_binder_transaction_buffer_release(buffer);
 			binder_transaction_buffer_release(proc, buffer, 0, false);
@@ -4088,6 +4644,114 @@ static int binder_thread_write(struct binder_proc *proc,
 			}
 			binder_inner_proc_unlock(proc);
 		} break;
+		//[TCT-ROM][PERF]Begin Added by jingyuan.wei for freezer on 2019/08/02
+		case BC_FREEZE_BINDER: {
+			uint32_t pid;
+			uint32_t event;
+			bool freeze_change = false;
+			int client = 0;
+			struct binder_proc *target;
+
+			if (get_user(pid, (uint32_t __user *)ptr))
+				return -EFAULT;
+			ptr += sizeof(uint32_t);
+			if (get_user(event, (uint32_t __user *)ptr))
+				return -EFAULT;
+			ptr += sizeof(uint32_t);
+
+			target = binder_get_proc(pid,binder_freeze_listener);
+			binder_debug(BINDER_DEBUG_FREEZE,"%d:%d BC_FREEZE_BINDER pid:%d event:%d target:%p\n",
+					proc->pid,thread->pid,pid,event,target);
+			if (target) {
+				binder_inner_proc_lock(target);
+				if (!target->is_dead) {
+					if (event == 0) {
+                                                if (target->is_frozen) {
+						        target->is_frozen = false;
+                                                        if (!target->is_processing) {
+                                                                target->is_cur_frozen = false;
+                                                                target->processing_type = 0;
+                                                        }
+                                                }
+					}else {
+						if (!target->is_frozen) {
+							target->is_frozen = true;
+                                                        if (!target->is_processing) {
+							        client = binder_proc_freeze(target);
+							        target->is_cur_frozen = client == 0 ? true : false;
+							        if (!target->is_cur_frozen) {
+								        target->is_processing = true;
+                                                                        target->processing_type = __LINE__;
+								        freeze_change = true;
+							        }
+                                                        }
+						}
+					}
+				}else {
+					binder_user_error("%d:%d BC_FREEZE_BINDER target is dead\n",proc->pid,thread->pid);
+				}
+				binder_debug(BINDER_DEBUG_FREEZE,"%d:%d BC_FREEZE_BINDER pid:%d event:%d frozen:%d cur frozen:%d processing:%d change:%d client:%d\n",
+				proc->pid,thread->pid,pid,event,target->is_frozen,target->is_cur_frozen,target->is_processing,freeze_change,client);
+				binder_inner_proc_unlock(target);
+				if (freeze_change)
+					binder_enquene_freeze_work(binder_freeze_listener,pid,0,client);
+			}
+		} break;
+		case BC_FREEZE_LISTENER: {
+			uint32_t pid;
+
+			if (get_user(pid, (uint32_t __user *)ptr))
+				return -EFAULT;
+			ptr += sizeof(uint32_t);
+
+			if (!binder_freeze_listener)
+				binder_freeze_listener = proc;
+			binder_debug(BINDER_DEBUG_FREEZE,"%d:%d BC_FREEZE_LISTENER pid:%d listener:%p %d\n",proc->pid,thread->pid,pid,binder_freeze_listener,binder_freeze_listener->pid);
+		} break;
+		case BC_FREEZE_DONE: {
+			uint32_t pid;
+			int client = 0;
+			bool is_cur_frozen;
+			bool freeze_change = false;
+			struct binder_proc *target;
+
+			if (get_user(pid, (uint32_t __user *)ptr))
+				return -EFAULT;
+			ptr += sizeof(uint32_t);
+
+                        target = binder_get_proc(pid,binder_freeze_listener);
+			binder_debug(BINDER_DEBUG_FREEZE,"%d:%d BC_FREEZE_DONE pid:%d target:%p\n",proc->pid,thread->pid,pid,target);
+			if (target) {
+				binder_inner_proc_lock(target);
+				if (target->is_frozen ) {
+					client = binder_proc_freeze(target);
+					is_cur_frozen = client == 0 ? true : false;
+					if (is_cur_frozen == target->is_cur_frozen) {
+						target->is_processing = false;
+                                                target->processing_type = 0;
+					}else {
+						target->is_cur_frozen = is_cur_frozen;
+                                                target->processing_type = __LINE__;
+						freeze_change = true;
+					}
+				}else {
+                                        target->is_processing = false;
+                                        target->processing_type = 0;
+                                        if (target->is_cur_frozen) {
+                                                target->is_cur_frozen = false;
+                                                target->is_processing = true;
+                                                target->processing_type = __LINE__;
+                                                freeze_change = true;
+                                                client = -2;
+                                        }
+                                }
+				binder_debug(BINDER_DEBUG_FREEZE,"%d:%d BC_FREEZE_DONE pid:%d frozen:%d cur frozen:%d processing:%d change:%d client:%d\n",proc->pid,thread->pid,pid,target->is_frozen,target->is_cur_frozen,target->is_processing,freeze_change,client);
+				binder_inner_proc_unlock(target);
+				if (freeze_change)
+					binder_enquene_freeze_work(binder_freeze_listener,pid,target->is_cur_frozen ? 1 : 0,client);
+			}
+		} break;
+                //[TCT-ROM][PERF]End Added by jingyuan.wei for freezer on 2019/08/02
 
 		default:
 			pr_err("%d:%d unknown command %d\n",
@@ -4237,9 +4901,15 @@ retry:
 		binder_inner_proc_lock(proc);
 		if (!binder_worklist_empty_ilocked(&thread->todo))
 			list = &thread->todo;
+#ifdef CONFIG_TCT_UI_TURBO
+		else if (!binder_proc_worklist_empty_ilocked(proc) &&
+			wait_for_proc_work)
+			list = binder_proc_select_worklist_ilocked(proc);
+#else
 		else if (!binder_worklist_empty_ilocked(&proc->todo) &&
 			   wait_for_proc_work)
 			list = &proc->todo;
+#endif
 		else {
 			binder_inner_proc_unlock(proc);
 
@@ -4418,6 +5088,36 @@ retry:
 			if (cmd == BR_DEAD_BINDER)
 				goto done; /* DEAD_BINDER notifications can cause transactions */
 		} break;
+		//[TCT-ROM][PERF]Begin Added by jingyuan.wei for freezer on 2019/08/02
+		case BINDER_WORK_FREEZE: {
+			struct binder_freeze *freeze;
+			uint32_t pid;
+			uint32_t event;
+			uint32_t client;
+
+			freeze = container_of(w, struct binder_freeze, work);
+			pid = freeze->pid;
+			event = freeze->event;
+			client = freeze->client;
+			binder_inner_proc_unlock(proc);
+                        cmd = BR_FREEZE;
+			if (put_user(cmd, (uint32_t __user *)ptr))
+				return -EFAULT;
+			ptr += sizeof(uint32_t);
+			if (put_user(pid, (uint32_t __user *)ptr))
+				return -EFAULT;
+			ptr += sizeof(uint32_t);
+			if (put_user(event, (uint32_t __user *)ptr))
+				return -EFAULT;
+			ptr += sizeof(uint32_t);
+			if (put_user(client, (uint32_t __user *)ptr))
+				return -EFAULT;
+			ptr += sizeof(uint32_t);
+			binder_debug(BINDER_DEBUG_FREEZE,"%d:%d BINDER_WORK_FREEZE cmd:BR_FREEZE pid:%d event:%d client:%d\n",proc->pid,thread->pid,pid,event,client);
+			kfree(freeze);
+			goto done;
+		} break;
+                //[TCT-ROM][PERF]End Added by jingyuan.wei for freezer on 2019/08/02
 		}
 
 		if (!t)
@@ -4447,6 +5147,12 @@ retry:
 		t_from = binder_get_txn_from(t);
 		if (t_from) {
 			struct task_struct *sender = t_from->proc->tsk;
+#ifdef CONFIG_TCT_UI_TURBO
+			bool oneway = !!(t->flags & TF_ONE_WAY);
+			binder_thread_check_and_set_dynamic_uiturbo(thread,
+								    t_from,
+								    oneway);
+#endif
 
 			trd->sender_pid =
 				task_tgid_nr_ns(sender,
@@ -4515,7 +5221,50 @@ retry:
 			t->to_thread = thread;
 			thread->transaction_stack = t;
 			binder_inner_proc_unlock(thread->proc);
+                        //[TCT-ROM][PERF]End Begin by jingyuan.wei for freezer on 2019/08/02
+                        {
+                                bool freeze_change = false;
+                                int freeze_client;
+                                binder_inner_proc_lock(thread->proc);
+                                if (binder_freeze_listener &&
+                                                thread->proc->is_frozen &&
+                                                thread->proc->is_cur_frozen &&
+                                                !proc->is_processing) {
+			                thread->proc->is_cur_frozen = false;
+			                thread->proc->is_processing = true;
+                                        thread->proc->processing_type = __LINE__;
+			                freeze_change = true;
+			                freeze_client = t->from->proc->pid;
+			                binder_debug(BINDER_DEBUG_FREEZE,"%d:%d need unfreeze pid:%d client:%d line:%d\n",proc->pid,thread->pid,thread->proc->pid,freeze_client,__LINE__);
+		                }
+                                binder_inner_proc_unlock(thread->proc);
+                                if (freeze_change)
+				        binder_enquene_freeze_work(binder_freeze_listener,thread->proc->pid,0,freeze_client);
+                        }
+                        //[TCT-ROM][PERF]End Added by jingyuan.wei for freezer on 2019/08/02
 		} else {
+                        //[TCT-ROM][PERF]End Begin by jingyuan.wei for freezer on 2019/08/02
+                        if (cmd == BR_TRANSACTION && (t->flags & TF_ONE_WAY))
+                        {
+                                bool freeze_change = false;
+                                int freeze_client;
+                                binder_inner_proc_lock(thread->proc);
+                                if (binder_freeze_listener &&
+                                                thread->proc->is_frozen &&
+                                                thread->proc->is_cur_frozen &&
+                                                !proc->is_processing) {
+			                thread->proc->is_cur_frozen = false;
+			                thread->proc->is_processing = true;
+                                        thread->proc->processing_type = __LINE__;
+			                freeze_change = true;
+			                freeze_client = -1;
+			                binder_debug(BINDER_DEBUG_FREEZE,"%d:%d need unfreeze pid:%d client:%d line:%d\n",proc->pid,thread->pid,thread->proc->pid,freeze_client,__LINE__);
+		                }
+                                binder_inner_proc_unlock(thread->proc);
+                                if (freeze_change)
+				        binder_enquene_freeze_work(binder_freeze_listener,thread->proc->pid,0,freeze_client);
+                        }
+                        //[TCT-ROM][PERF]End Added by jingyuan.wei for freezer on 2019/08/02
 			binder_free_transaction(t);
 		}
 		break;
@@ -4845,7 +5594,11 @@ static int binder_ioctl_write_read(struct file *filp,
 					 filp->f_flags & O_NONBLOCK);
 		trace_binder_read_done(ret);
 		binder_inner_proc_lock(proc);
+#ifdef CONFIG_TCT_UI_TURBO
+		if (!binder_proc_worklist_empty_ilocked(proc))
+#else
 		if (!binder_worklist_empty_ilocked(&proc->todo))
+#endif
 			binder_wakeup_proc_ilocked(proc);
 		binder_inner_proc_unlock(proc);
 		if (ret < 0) {
@@ -5207,6 +5960,10 @@ static int binder_open(struct inode *nodp, struct file *filp)
 	proc->tsk = current->group_leader;
 	mutex_init(&proc->files_lock);
 	INIT_LIST_HEAD(&proc->todo);
+#ifdef CONFIG_TCT_UI_TURBO
+	INIT_LIST_HEAD(&proc->ui_todo);
+	proc->ui_count = 0;
+#endif
 	if (binder_supported_policy(current->policy)) {
 		proc->default_priority.sched_policy = current->policy;
 		proc->default_priority.prio = current->normal_prio;
@@ -5428,6 +6185,13 @@ static void binder_deferred_release(struct binder_proc *proc)
 	proc->tmp_ref++;
 
 	proc->is_dead = true;
+	//[TCT-ROM][PERF]Begin Added by jingyuan.wei for freezer on 2019/08/02
+	proc->is_frozen = false;
+	if (proc == binder_freeze_listener) {
+		binder_debug(BINDER_DEBUG_FREEZE,"reset binder freeze listener\n");
+		binder_freeze_listener = NULL;
+	}
+        //[TCT-ROM][PERF]End Added by jingyuan.wei for freezer on 2019/08/02
 	threads = 0;
 	active_transactions = 0;
 	while ((n = rb_first(&proc->threads))) {
@@ -5474,6 +6238,9 @@ static void binder_deferred_release(struct binder_proc *proc)
 	}
 	binder_proc_unlock(proc);
 
+#ifdef CONFIG_TCT_UI_TURBO
+	binder_release_work(proc, &proc->ui_todo);
+#endif
 	binder_release_work(proc, &proc->todo);
 	binder_release_work(proc, &proc->delivered_death);
 
@@ -5721,6 +6488,9 @@ static void print_binder_proc(struct seq_file *m,
 	header_pos = m->count;
 
 	binder_inner_proc_lock(proc);
+	//[TCT-ROM][PERF]Begin Added by jingyuan.wei for freezer on 2019/08/02
+        seq_printf(m, "frozen %d current frozen %d processing %d type %d\n", proc->is_frozen,proc->is_cur_frozen,proc->is_processing,proc->processing_type);
+        //[TCT-ROM][PERF]End Added by jingyuan.wei for freezer on 2019/08/02
 	for (n = rb_first(&proc->threads); n != NULL; n = rb_next(n))
 		print_binder_thread_ilocked(m, rb_entry(n, struct binder_thread,
 						rb_node), print_all);
@@ -5766,6 +6536,11 @@ static void print_binder_proc(struct seq_file *m,
 	list_for_each_entry(w, &proc->todo, entry)
 		print_binder_work_ilocked(m, proc, "  ",
 					  "  pending transaction", w);
+#ifdef CONFIG_TCT_UI_TURBO
+	list_for_each_entry(w, &proc->ui_todo, entry)
+		print_binder_work_ilocked(m, proc, "  ",
+					  "  pending ui transaction", w);
+#endif
 	list_for_each_entry(w, &proc->delivered_death, entry) {
 		seq_puts(m, "  has delivered dead binder\n");
 		break;
@@ -5931,6 +6706,16 @@ static void print_binder_proc_stats(struct seq_file *m,
 	binder_inner_proc_unlock(proc);
 	seq_printf(m, "  pending transactions: %d\n", count);
 
+#ifdef CONFIG_TCT_UI_TURBO
+	count = 0;
+	binder_inner_proc_lock(proc);
+	list_for_each_entry(w, &proc->ui_todo, entry) {
+		if (w->type == BINDER_WORK_TRANSACTION)
+			count++;
+	}
+	binder_inner_proc_unlock(proc);
+	seq_printf(m, "  pending ui transactions: %d\n", count);
+#endif
 	print_binder_stats(m, "  ", &proc->stats);
 }
 
@@ -6067,6 +6852,13 @@ int binder_transaction_log_show(struct seq_file *m, void *unused)
 	return 0;
 }
 
+//[TCT-ROM][PERF]Begin Add by jingyuan.wei for freezer on 2020/09/14
+int binder_freeze_show(struct seq_file *m, void *unused)
+{
+        return 0;
+}
+//[TCT-ROM][PERF]End Add by jingyuan.wei for freezer on 2020/09/14
+
 const struct file_operations binder_fops = {
 	.owner = THIS_MODULE,
 	.poll = binder_poll,
@@ -6153,6 +6945,13 @@ static int __init binder_init(void)
 				    binder_debugfs_dir_entry_root,
 				    &binder_transaction_log_failed,
 				    &binder_transaction_log_fops);
+#ifdef CONFIG_TCT_UI_TURBO
+		debugfs_create_file("count",
+				    S_IRUGO,
+				    binder_debugfs_dir_entry_root,
+				    NULL,
+				    &binder_count_fops);
+#endif
 	}
 
 	if (!IS_ENABLED(CONFIG_ANDROID_BINDERFS) &&

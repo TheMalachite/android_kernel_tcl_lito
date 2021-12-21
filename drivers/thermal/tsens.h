@@ -62,10 +62,18 @@ struct tsens_device;
 				pr_debug("tsens: invalid logging index\n"); \
 		} \
 	} while (0)
+
+//[PLATFORM]-Add-BEGIN by TCTNB.YuBin, 2021/5/7, limit thermal dump
+#ifdef CONFIG_TCT_LITO_CHICAGO
+#define TSENS_DUMP(dev, msg, args...) do {} while (0)
+#else
 #define TSENS_DUMP(dev, msg, args...) do {				\
 		TSENS_IPC(2, dev, msg, args); \
 		pr_info(msg, ##args);	\
 	} while (0)
+#endif
+//[PLATFORM]-Add-END by TCTNB.YuBin
+
 #define TSENS_ERR(dev, msg, args...) do {				\
 		pr_err(msg, ##args);	\
 		TSENS_IPC(1, dev, msg, args); \

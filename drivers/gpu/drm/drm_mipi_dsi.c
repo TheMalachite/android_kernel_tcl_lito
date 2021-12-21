@@ -449,8 +449,13 @@ int mipi_dsi_create_packet(struct mipi_dsi_packet *packet,
 		return -EINVAL;
 
 	/* do some minimum sanity checking */
+#if defined(CONFIG_PXLW_IRIS6)
+	if (!mipi_dsi_packet_format_is_short(msg->type & 0x3f) &&
+		!mipi_dsi_packet_format_is_long(msg->type & 0x3f))
+#else
 	if (!mipi_dsi_packet_format_is_short(msg->type) &&
 	    !mipi_dsi_packet_format_is_long(msg->type))
+#endif
 		return -EINVAL;
 
 	if (msg->channel > 3)
@@ -468,7 +473,11 @@ int mipi_dsi_create_packet(struct mipi_dsi_packet *packet,
 	 * Short write packets encode up to two parameters in header bytes 1
 	 * and 2.
 	 */
+#if defined(CONFIG_PXLW_IRIS6)
+	if (mipi_dsi_packet_format_is_long(msg->type & 0x3f)) {
+#else
 	if (mipi_dsi_packet_format_is_long(msg->type)) {
+#endif
 		packet->header[0] = (msg->tx_len >> 0) & 0xff;
 		packet->header[1] = (msg->tx_len >> 8) & 0xff;
 
@@ -1058,7 +1067,11 @@ EXPORT_SYMBOL(mipi_dsi_dcs_set_tear_scanline);
 int mipi_dsi_dcs_set_display_brightness(struct mipi_dsi_device *dsi,
 					u16 brightness)
 {
+#if defined CONFIG_TCT_LITO_OTTAWA
+	u8 payload[2] = { brightness >> 8, brightness & 0xff };
+#else
 	u8 payload[2] = { brightness & 0xff, brightness >> 8 };
+#endif
 	ssize_t err;
 
 	err = mipi_dsi_dcs_write(dsi, MIPI_DCS_SET_DISPLAY_BRIGHTNESS,
@@ -1069,6 +1082,39 @@ int mipi_dsi_dcs_set_display_brightness(struct mipi_dsi_device *dsi,
 	return 0;
 }
 EXPORT_SYMBOL(mipi_dsi_dcs_set_display_brightness);
+
+#ifdef CONFIG_TCT_LITO_CHICAGO
+/**
+ * mipi_dsi_dcs_set_display_brightness_chicago() - sets the brightness value of the
+ *    display
+ * @dsi: DSI peripheral device
+ * @brightness: brightness value
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int mipi_dsi_dcs_set_display_brightness_chicago(struct mipi_dsi_device *dsi,
+					u16 brightness, u8 panel_type)
+{
+	ssize_t err;
+	u8 payload[2];
+
+	if (panel_type == 0) {
+		payload[0] = brightness >> 8;
+		payload[1] = brightness & 0xff;
+	} else {
+		payload[0] = brightness & 0xff;
+		payload[1] = brightness >> 8;
+	}
+
+	err = mipi_dsi_dcs_write(dsi, MIPI_DCS_SET_DISPLAY_BRIGHTNESS,
+				 payload, sizeof(payload));
+	if (err < 0)
+		return err;
+
+	return 0;
+}
+EXPORT_SYMBOL(mipi_dsi_dcs_set_display_brightness_chicago);
+#endif
 
 /**
  * mipi_dsi_dcs_get_display_brightness() - gets the current brightness value

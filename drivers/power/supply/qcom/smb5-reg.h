@@ -42,6 +42,9 @@ enum {
 
 #define BATTERY_CHARGER_STATUS_2_REG		(CHGR_BASE + 0x07)
 #define CHARGER_ERROR_STATUS_BAT_OV_BIT		BIT(1)
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+#define CHARGER_ERROR_STATUS_SFT_EXPIRE_BIT		BIT(2)
+#endif
 
 #define BATTERY_CHARGER_STATUS_5_REG		(CHGR_BASE + 0x0B)
 #define ENABLE_TRICKLE_BIT			BIT(2)
@@ -156,6 +159,10 @@ enum {
 
 #define DCDC_CFG_REF_MAX_PSNS_REG		(DCDC_BASE + 0x8C)
 
+#if defined(CONFIG_TCT_PM7250_COMMON)
+#define DCIN_5V_AICL_THRESH_REG		(DCDC_BASE + 0x8D)
+#endif
+
 #define DCDC_ENG_SDCDC_CFG5_REG			(DCDC_BASE + 0xC4)
 #define ENG_SDCDC_BAT_HPWR_MASK			GENMASK(7, 6)
 enum {
@@ -191,6 +198,10 @@ enum {
 #define BATIF_ADC_INTERNAL_PULL_UP_REG		(BATIF_BASE + 0x86)
 #define INTERNAL_PULL_UP_CONN_THM_MASK		GENMASK(5, 4)
 #define CONN_THM_SHIFT				4
+#if defined(CONFIG_TCT_PM7250_COMMON)
+#define INTERNAL_PULL_UP_BAT_THM_MASK		GENMASK(1, 0)
+#define BAT_THM_SHIFT				0
+#endif
 #define INTERNAL_PULL_NO_PULL			0x00
 #define INTERNAL_PULL_30K_PULL			0x01
 #define INTERNAL_PULL_100K_PULL			0x02
@@ -314,21 +325,69 @@ enum {
 /********************************
  *  DCIN Peripheral Registers   *
  ********************************/
+#if defined(CONFIG_TCT_PM7250_COMMON)
+#define DCIN_INPUT_STATUS_REG			(DCIN_BASE + 0x06)
+#define DCIN_INPUT_5V_BIT			BIT(0)
+#define DCIN_INPUT_5V_TO_9V_BIT		BIT(1)
+#define DCIN_INPUT_5V_TO_12V_BIT	BIT(2)
+#define DCIN_INPUT_9V_BIT			BIT(3)
+#define DCIN_INPUT_9V_TO_12V_BIT	BIT(4)
+#define DCIN_INPUT_12V_BIT			BIT(5)
+#endif
 
 /* DCIN Interrupt Bits */
 #define DCIN_PLUGIN_RT_STS_BIT			BIT(4)
 
+#if defined(CONFIG_TCT_PM7250_COMMON)
+#define DCIN_PON_RT_STS_BIT		BIT(6) 
+#define DCIN_EN_RT_STS_BIT			BIT(7)
+#endif
+
 #define DCIN_CMD_IL_REG				(DCIN_BASE + 0x40)
 #define DCIN_SUSPEND_BIT			BIT(0)
 #define DCIN_EN_OVERRIDE_BIT			BIT(1)
+#if defined(CONFIG_TCT_PM7250_COMMON)
+#define DCIN_EN_VAL_BIT		BIT(2)
+#endif
 #define DCIN_EN_MASK				GENMASK(2, 1)
+
+#if defined(CONFIG_TCT_PM7250_COMMON)
+#define DCIN_CMD_REG_SEL_REG		(DCIN_BASE + 0x41)
+#define DCIN_REG_OVERRIDE_EN		BIT(0)
+#define DCIN_REG_OVERRIDE_VAL		BIT(1)
+#endif
 
 #define DCIN_CMD_PON_REG			(DCIN_BASE + 0x45)
 #define DCIN_PON_BIT				BIT(0)
 #define MID_CHG_BIT					BIT(1)
 
+#if defined(CONFIG_TCT_PM7250_COMMON)
+#define DCIN_ADAPTER_ALLOW_REG		(DCIN_BASE + 0x60)
+#define DCIN_ADAPTER_ALLOW_5V		0x00
+#define DCIN_ADAPTER_ALLOW_9V		0x02
+#define DCIN_ADAPTER_ALLOW_5V_OR_9V	0x03
+#define DCIN_ADAPTER_ALLOW_12V		0x04
+#define DCIN_ADAPTER_ALLOW_5V_OR_12V		0x05
+#define DCIN_ADAPTER_ALLOW_9V_TO_12V		0x06
+#define DCIN_ADAPTER_ALLOW_5V_OR_9V_TO_12V	0x07
+#define DCIN_ADAPTER_ALLOW_5V_TO_9V		0x08
+#define DCIN_ADAPTER_ALLOW_5V_TO_12V	0x0C
+#endif
+
 #define DCIN_LOAD_CFG_REG			(DCIN_BASE + 0x65)
 #define INPUT_MISS_POLL_EN_BIT			BIT(5)
+
+#if defined(CONFIG_TCT_PM7250_COMMON)
+#define DCIN_WIRELESS_CFG_REG		(DCIN_BASE + 0x66)
+#define DCIN_EN_POLARITY_BIT		BIT(0)
+#define DCIN_SUSPEND_DIS_IN_BIT		BIT(1)
+#define DCIN_IN_OFF_CFG_BIT			GENMASK(3, 2)
+#define DCIN_IN_OFF_SHIFT	2
+#define DCIN_IN_OFF_100MS	0x00
+#define DCIN_IN_OFF_200MS	0x01
+#define DCIN_IN_OFF_500MS	0x02
+#define DCIN_IN_OFF_1000MS	0x03
+#endif
 
 /********************************
  *  TYPEC Peripheral Registers  *
@@ -394,6 +453,13 @@ enum {
 #define TYPEC_CCOUT_BUFFER_EN_BIT		BIT(2)
 #define TYPEC_CCOUT_VALUE_BIT			BIT(1)
 #define TYPEC_CCOUT_SRC_BIT			BIT(0)
+
+/* Begin added by hailong.chen for defect 9905851 on 2020-09-16 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+#define TYPE_C_DEBUG_ACCESS_SINK_REG	(TYPEC_BASE + 0x4A)
+#define TYPEC_DEBUG_ACCESS_SINK_MASK	GENMASK(4, 0)
+#endif
+/* End added by hailong.chen for defect 9905851 on 2020-09-16 */
 
 #define DEBUG_ACCESS_SRC_CFG_REG		(TYPEC_BASE + 0x4C)
 #define EN_UNORIENTED_DEBUG_ACCESS_SRC_BIT	BIT(0)
@@ -517,6 +583,9 @@ enum {
 #define SNARL_WDOG_TIMEOUT_SHIFT		4
 #define SNARL_WDOG_TMOUT_62P5MS			0x00
 #define SNARL_WDOG_TMOUT_1S			0x40
+#if defined(CONFIG_TCT_OTTAWA_CHG_PATCH) || defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+#define SNARL_WDOG_TMOUT_4S			0x60
+#endif
 #define SNARL_WDOG_TMOUT_8S			0x70
 #define BARK_WDOG_TIMEOUT_MASK			GENMASK(3, 2)
 #define BARK_WDOG_TIMEOUT_SHIFT			2
@@ -526,6 +595,11 @@ enum {
 
 #define AICL_RERUN_TIME_CFG_REG			(MISC_BASE + 0x61)
 #define AICL_RERUN_TIME_12S_VAL			0x01
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+#define AICL_RERUN_TIME_3MIN_VAL			0x03
+#endif
 
 #define MISC_THERMREG_SRC_CFG_REG		(MISC_BASE + 0x70)
 #define THERMREG_SW_ICL_ADJUST_BIT		BIT(7)
@@ -545,6 +619,13 @@ enum {
 #define STAT_IRQ_PULSING_EN_BIT			BIT(0)
 
 #define DIE_REG_H_THRESHOLD_MSB_REG		(MISC_BASE + 0xA0)
+
+#if defined(CONFIG_TCT_PM7250_COMMON)
+#define SKIN_REG_SHDN_THRESHOLD_MSB_REG	(MISC_BASE + 0xB0)
+#define SKIN_REG_RST_THRESHOLD_MSB_REG		(MISC_BASE + 0xB2)
+#define SKIN_REG_H_THRESHOLD_MSB_REG		(MISC_BASE + 0xB4)
+#define SKIN_REG_L_THRESHOLD_MSB_REG		(MISC_BASE + 0xB6)
+#endif
 
 #define SMB_REG_H_THRESHOLD_MSB_REG		(MISC_BASE + 0XBC)
 

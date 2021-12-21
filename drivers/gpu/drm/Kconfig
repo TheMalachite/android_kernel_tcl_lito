@@ -422,3 +422,7 @@ config DRM_PANEL_ORIENTATION_QUIRKS
 config DRM_LIB_RANDOM
 	bool
 	default n
+
+config PXLW_IRIS3
+       bool "Enable pxlw iris3"
+       default n

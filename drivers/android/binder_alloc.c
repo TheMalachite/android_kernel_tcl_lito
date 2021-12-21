@@ -1140,6 +1140,24 @@ static struct page *binder_alloc_get_page(struct binder_alloc *alloc,
 	return lru_page->page_ptr;
 }
 
+//[TCT-ROM][PERF]Begin Added by jingyuan.wei for freezer on 2019/08/02
+struct page *binder_alloc_get_page_freeze(struct binder_alloc *alloc,
+					  struct binder_buffer *buffer,
+					  binder_size_t buffer_offset,
+					  pgoff_t *pgoffp)
+{
+	binder_size_t buffer_space_offset = buffer_offset +
+		(buffer->user_data - alloc->buffer);
+	pgoff_t pgoff = buffer_space_offset & ~PAGE_MASK;
+	size_t index = buffer_space_offset >> PAGE_SHIFT;
+	struct binder_lru_page *lru_page;
+
+	lru_page = &alloc->pages[index];
+	*pgoffp = pgoff;
+	return lru_page->page_ptr;
+}
+//[TCT-ROM][PERF]End Added by jingyuan.wei for freezer on 2019/08/02
+
 /**
  * binder_alloc_copy_user_to_buffer() - copy src user to tgt user
  * @alloc: binder_alloc for this proc

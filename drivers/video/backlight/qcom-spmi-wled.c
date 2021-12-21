@@ -1646,10 +1646,75 @@ static ssize_t wled_flash_max_avail_current_show(struct device *dev,
 
 	return snprintf(buf, PAGE_SIZE, "%d\n", max_current);
 }
+//begin add by xiongbo.huang for 9886961 on 20200914
+#ifdef CONFIG_TCT_PROJECT_IRVINE
+static ssize_t wled_switch_max_current_change_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	struct wled *wled;
+	if (!strcmp(led_cdev->name, "wled_switch"))
+		wled = container_of(led_cdev, struct wled, switch_cdev);
+	else{
+	    pr_err("not wled_switch,return directly\n");
+	    snprintf(buf, PAGE_SIZE, "NA\n");
+	}
 
+	return snprintf(buf, PAGE_SIZE, "%d uA\n", (u32)(wled->cfg.fs_current*2500));
+}
+
+static ssize_t wled_switch_max_current_change_store(struct device* dev,
+    struct device_attribute *attr, const char *buf, size_t count) {
+
+    unsigned long state;
+    ssize_t ret;
+    struct led_classdev *led_cdev = dev_get_drvdata(dev);
+    struct wled *wled;
+    int i = 0;
+    u8 string_cfg;
+
+	if (!strcmp(led_cdev->name, "wled_switch"))
+		wled = container_of(led_cdev, struct wled, switch_cdev);
+	else{
+	    pr_err("not wled_switch,return directly\n");
+	    return count;
+	}
+
+    ret = kstrtoul(buf, 2, &state);
+    if (ret){
+        pr_err("read max current_store fail\n");
+    }
+    if(state == 1){//set max current to 25mA
+        wled->cfg.fs_current = 10;
+    }else{//set max current to 20mA
+        wled->cfg.fs_current = 8;
+    }
+
+    string_cfg = wled->cfg.string_cfg;
+    for (i = 0; (string_cfg >> i) != 0; i++) {
+		if (string_cfg & BIT(i)) {
+			ret = regmap_update_bits(wled->regmap, (wled->sink_addr + WLED5_SINK_FS_CURR_REG(i)),
+					WLED_SINK_FS_MASK,wled->cfg.fs_current);
+			if (ret < 0){
+			    pr_err("write registers fail\n");
+			    return count;
+			}
+		}
+	}
+	wled_sync_toggle(wled);
+    return count;
+}
+#endif
+//end add by xiongbo.huang for 9886961 on 20200914
 static struct device_attribute wled_flash_attrs[] = {
 	__ATTR(max_avail_current, 0664, wled_flash_max_avail_current_show,
 		NULL),
+//begin add by xiongbo.huang for 9886961 on 20200914
+#ifdef CONFIG_TCT_PROJECT_IRVINE
+	__ATTR(max_current_change, 0664, wled_switch_max_current_change_show,
+		wled_switch_max_current_change_store),
+#endif
+//end add by xiongbo.huang for 9886961 on 20200914
 };
 
 int wled_flash_led_prepare(struct led_trigger *trig, int options,

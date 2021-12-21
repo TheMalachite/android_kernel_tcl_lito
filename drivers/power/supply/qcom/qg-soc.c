@@ -629,7 +629,14 @@ static enum alarmtimer_restart
 
 	/* timer callback runs in atomic context, cannot use voter */
 	pm_stay_awake(chip->dev);
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	queue_work(private_chg_wq, &chip->scale_soc_work);
+#else
 	schedule_work(&chip->scale_soc_work);
+#endif
 
 	return ALARMTIMER_NORESTART;
 }

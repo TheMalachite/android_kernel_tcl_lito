@@ -1,0 +1,5 @@
+config TCT_CPULOAD_NOTI
+    bool "notify cpu load"
+    default y
+    help
+      if set, the cpu load will be reported to the cpufeature

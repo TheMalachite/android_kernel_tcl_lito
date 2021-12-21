@@ -176,10 +176,8 @@
 
 #define PERPH0_CFG_SDCDC_REG		0x267A
 #define EN_WIN_UV_BIT			BIT(7)
-
-#define PERPH0_SOVP_CFG0_REG		0x2680
-#define CFG_OVP_IGNORE_UVLO		BIT(5)
-
+#define PERPH0_SOVP_CFG0_REG 0x2680
+#define CFG_OVP_IGNORE_UVLO BIT(5)
 #define PERPH0_SSUPPLY_CFG0_REG		0x2682
 #define EN_HV_OV_OPTION2_BIT		BIT(7)
 #define EN_MV_OV_OPTION2_BIT		BIT(5)
@@ -218,6 +216,12 @@
 #define CC_MODE_VOTER			"CC_MODE_VOTER"
 #define MAIN_DISABLE_VOTER		"MAIN_DISABLE_VOTER"
 #define TAPER_MAIN_ICL_LIMIT_VOTER	"TAPER_MAIN_ICL_LIMIT_VOTER"
+
+/* Begin added by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON) || defined(CONFIG_TCT_PM7250_COMMON)
+#define VOL_LEVEL_VOTER			"VOL_LEVEL_VOTER"
+#endif
+/* End added by hailong.chen for task 9551005 on 2020-08-05 */
 
 /* Constant definitions */
 #define DIV2_MAX_ILIM_UA		5000000
@@ -316,6 +320,9 @@ struct smb1398_chip {
 	struct votable		*fv_votable;
 	struct votable		*fcc_main_votable;
 	struct votable		*usb_icl_votable;
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON) || defined(CONFIG_TCT_PM7250_COMMON)
+	struct votable		*fv2_votable;
+#endif
 
 	struct work_struct	status_change_work;
 	struct work_struct	taper_work;
@@ -1013,9 +1020,19 @@ static int div2_cp_master_get_prop(struct power_supply *psy,
 						chip->div2_cp_disable_votable);
 		break;
 	case POWER_SUPPLY_PROP_CP_SWITCHER_EN:
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON) || defined(CONFIG_TCT_PM7250_COMMON)
 		rc = smb1398_get_enable_status(chip);
 		if (!rc)
 			val->intval = chip->switcher_en;
+		else
+			val->intval = 0;
+#else
+		rc = smb1398_get_enable_status(chip);
+		if (!rc)
+			val->intval = chip->switcher_en;
+#endif
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
 		break;
 	case POWER_SUPPLY_PROP_CP_ISNS:
 		rc = smb1398_div2_cp_get_master_isns(chip, &isns_ua);
@@ -1081,6 +1098,13 @@ static int div2_cp_master_get_prop(struct power_supply *psy,
 		rc = -EINVAL;
 		break;
 	}
+
+/* Begin added by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON) || defined(CONFIG_TCT_PM7250_COMMON)
+	if (rc < 0)
+		rc = -ENODATA;
+#endif
+/* End added by hailong.chen for task 9551005 on 2020-08-05 */
 
 	return rc;
 }
@@ -1206,6 +1230,16 @@ static bool is_psy_voter_available(struct smb1398_chip *chip)
 		}
 	}
 
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON) || defined(CONFIG_TCT_PM7250_COMMON)
+	if (!chip->fv2_votable) {
+		chip->fv2_votable = find_votable("FV2");
+		if (!chip->fv2_votable) {
+			dev_dbg(chip->dev, "Couldn't find FV2 voltable\n");
+			return false;
+		}
+	}
+#endif
+
 	if (!chip->usb_icl_votable) {
 		chip->usb_icl_votable = find_votable("USB_ICL");
 		if (!chip->usb_icl_votable) {
@@ -1245,6 +1279,37 @@ static bool is_cutoff_soc_reached(struct smb1398_chip *chip)
 err:
 	return false;
 }
+
+/* Begin added by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON) || defined(CONFIG_TCT_PM7250_COMMON)
+#define MIN_ALLOWED_FV_MV (3600000)
+#define MAX_DELTA_OV_MV (20000)
+static int smb1398_is_batt_vol_valid(struct smb1398_chip *chip)
+{
+	int rc;
+	int max_fv = 0;
+	union power_supply_propval pval = {0, };
+	if (!chip->batt_psy)
+		goto out;
+	max_fv = get_effective_result(chip->fv2_votable);
+	if (max_fv < MIN_ALLOWED_FV_MV)
+		goto out;
+	rc = power_supply_get_property(chip->batt_psy,
+			POWER_SUPPLY_PROP_VOLTAGE_NOW, &pval);
+	if (rc < 0) {
+		pr_err("Couldn't get voltage rc=%d\n", rc);
+		goto out;
+	}
+	if (pval.intval >= (max_fv + MAX_DELTA_OV_MV)) {
+		pr_err("VOL(%d) > max_fv(%d) + delta(%d), inhibit\n",
+					pval.intval, max_fv, MAX_DELTA_OV_MV);
+		return false;
+	}
+out:
+	return true;
+}
+#endif
+/* End added by hailong.chen for task 9551005 on 2020-08-05 */
 
 static bool is_adapter_in_cc_mode(struct smb1398_chip *chip)
 {
@@ -1375,16 +1440,28 @@ static int smb1398_div2_cp_ilim_vote_cb(struct votable *votable,
 
 	min_ilim_ua = smb1398_div2_cp_get_min_icl(chip);
 
+#if !defined(CONFIG_TCT_PM7250_COMMON)
 	ilim_ua = (ilim_ua * DIV2_ILIM_CFG_PCT) / 100;
-
 	max_ilim_ua = is_cps_available(chip) ?
 		DIV2_MAX_ILIM_DUAL_CP_UA : DIV2_MAX_ILIM_UA;
 	ilim_ua = min(ilim_ua, max_ilim_ua);
+#endif
+
+#if defined(CONFIG_TCT_PM7250_COMMON)
+	if (ilim_ua <= min_ilim_ua) {
+#else
 	if (ilim_ua < min_ilim_ua) {
-		dev_dbg(chip->dev, "ilim %duA is too low to config CP charging\n",
+#endif
+		dev_err(chip->dev, "ilim %duA is too low to config CP charging\n",
 				ilim_ua);
 		vote(chip->div2_cp_disable_votable, ILIM_VOTER, true, 0);
 	} else {
+#if defined(CONFIG_TCT_PM7250_COMMON)
+		ilim_ua = (ilim_ua * DIV2_ILIM_CFG_PCT) / 100;
+		max_ilim_ua = is_cps_available(chip) ?
+			DIV2_MAX_ILIM_DUAL_CP_UA : DIV2_MAX_ILIM_UA;
+		ilim_ua = min(ilim_ua, max_ilim_ua);
+#endif
 		if (is_cps_available(chip)) {
 			split_ilim = true;
 			slave_dis = ilim_ua < (2 * min_ilim_ua);
@@ -1674,8 +1751,21 @@ static void smb1398_status_change_work(struct work_struct *work)
 	 * valid due to the battery discharging later, remove
 	 * vote from CUTOFF_SOC_VOTER.
 	 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON) || defined(CONFIG_TCT_PM7250_COMMON)
+	vote(chip->div2_cp_disable_votable, CUTOFF_SOC_VOTER,
+				is_cutoff_soc_reached(chip), 0);
+#else
 	if (!is_cutoff_soc_reached(chip))
 		vote(chip->div2_cp_disable_votable, CUTOFF_SOC_VOTER, false, 0);
+#endif
+
+/* Begin added by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON) || defined(CONFIG_TCT_PM7250_COMMON)
+	vote(chip->div2_cp_disable_votable, VOL_LEVEL_VOTER,
+			smb1398_is_batt_vol_valid(chip) ? false : true, 0);
+#endif
+
+/* End added by hailong.chen for task 9551005 on 2020-08-05 */
 
 	rc = power_supply_get_property(chip->usb_psy,
 			POWER_SUPPLY_PROP_PRESENT, &pval);
@@ -1792,6 +1882,11 @@ static void smb1398_status_change_work(struct work_struct *work)
 			queue_work(system_long_wq, &chip->taper_work);
 		}
 	}
+
+#if defined(CONFIG_TCT_PM7250_COMMON)
+	rerun_election(chip->div2_cp_ilim_votable);
+#endif
+
 out:
 	pm_relax(chip->dev);
 	chip->status_change_running = false;
@@ -1815,7 +1910,13 @@ static int smb1398_notifier_cb(struct notifier_block *nb,
 		if (!chip->status_change_running) {
 			chip->status_change_running = true;
 			pm_stay_awake(chip->dev);
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON) || defined(CONFIG_TCT_PM7250_COMMON)
+			queue_work(private_chg_wq, &chip->status_change_work);
+#else
 			schedule_work(&chip->status_change_work);
+#endif
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
 		}
 		spin_unlock_irqrestore(&chip->status_change_lock, flags);
 	}
@@ -1854,8 +1955,15 @@ static void smb1398_taper_work(struct work_struct *work)
 
 		fv_uv = get_effective_result(chip->fv_votable);
 		if (fv_uv > chip->taper_entry_fv) {
+/* Begin modified by hailong.chen for defect 10056839 on 2020-10-17 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+			dev_err_ratelimited(chip->dev, "Float voltage increased (%d-->%d)uV, exit!\n",
+					chip->taper_entry_fv, fv_uv);
+#else
 			dev_dbg(chip->dev, "Float voltage increased (%d-->%d)uV, exit!\n",
 					chip->taper_entry_fv, fv_uv);
+#endif
+/* End modified by hailong.chen for defect 10056839 on 2020-10-17 */
 			vote(chip->div2_cp_disable_votable, TAPER_VOTER,
 					false, 0);
 			goto out;
@@ -1869,8 +1977,15 @@ static void smb1398_taper_work(struct work_struct *work)
 				TAPER_STEPPER_UA_DEFAULT;
 			fcc_ua = get_effective_result(chip->fcc_votable)
 				- stepper_ua;
+/* Begin modified by hailong.chen for defect 10056839 on 2020-10-17 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+			dev_err_ratelimited(chip->dev, "Taper stepper reduce FCC to %d\n",
+					fcc_ua);
+#else
 			dev_dbg(chip->dev, "Taper stepper reduce FCC to %d\n",
 					fcc_ua);
+#endif
+/* End modified by hailong.chen for defect 10056839 on 2020-10-17 */
 			vote(chip->fcc_votable, CP_VOTER, true, fcc_ua);
 			fcc_ua -= main_fcc_ua;
 			/*
@@ -1920,7 +2035,13 @@ static void smb1398_taper_work(struct work_struct *work)
 		msleep(500);
 	}
 out:
+/* Begin modified by hailong.chen for defect 10056839 on 2020-10-17 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	dev_err_ratelimited(chip->dev, "exit taper work\n");
+#else
 	dev_dbg(chip->dev, "exit taper work\n");
+#endif
+/* End modified by hailong.chen for defect 10056839 on 2020-10-17 */
 	vote(chip->fcc_votable, CP_VOTER, false, 0);
 	vote(chip->awake_votable, TAPER_VOTER, false, 0);
 	chip->taper_work_running = false;
@@ -1981,9 +2102,15 @@ static int smb1398_div2_cp_hw_init(struct smb1398_chip *chip)
 		return rc;
 	}
 
+#if defined(CONFIG_TCT_PM7250_COMMON)
+	/* Configure window (Vin/2 - Vout) UV level to 20mV */
+	rc = smb1398_masked_write(chip, NOLOCK_SPARE_REG,
+			DIV2_WIN_UV_SEL_BIT, DIV2_WIN_UV_SEL_BIT);
+#else
 	/* Configure window (Vin/2 - Vout) UV level to 10mV */
 	rc = smb1398_masked_write(chip, NOLOCK_SPARE_REG,
 			DIV2_WIN_UV_SEL_BIT, 0);
+#endif
 	if (rc < 0) {
 		dev_err(chip->dev, "Couldn't set WIN_UV_10_MV rc=%d\n", rc);
 		return rc;
@@ -2609,6 +2736,15 @@ static int smb1398_probe(struct platform_device *pdev)
 	struct smb1398_chip *chip;
 	int rc = 0;
 
+/* Begin added by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON) || defined(CONFIG_TCT_PM7250_COMMON)
+	if (!power_supply_get_by_name("usb")) {
+		pr_err("Could not get USB power_supply, deferring smb1398 probe\n");
+		return -EPROBE_DEFER;
+	}
+#endif
+/* End added by hailong.chen for task 9551005 on 2020-08-05 */
+
 	chip = devm_kzalloc(&pdev->dev, sizeof(*chip), GFP_KERNEL);
 	if (!chip)
 		return -ENOMEM;
@@ -2684,6 +2820,12 @@ static int smb1398_resume(struct device *dev)
 	struct smb1398_chip *chip = dev_get_drvdata(dev);
 
 	chip->in_suspend = false;
+
+#if defined(CONFIG_TCT_PM7250_COMMON)
+	if(get_effective_result(chip->div2_cp_disable_votable)) {
+		return 0;
+	}
+#endif
 
 	if (chip->div2_cp_role == DIV2_CP_MASTER) {
 		rerun_election(chip->div2_cp_ilim_votable);

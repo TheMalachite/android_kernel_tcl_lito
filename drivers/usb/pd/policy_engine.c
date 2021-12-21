@@ -3,6 +3,12 @@
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+#define pr_fmt(fmt) "[PE]:" fmt
+#endif
+
 #include <linux/completion.h>
 #include <linux/delay.h>
 #include <linux/hrtimer.h>
@@ -160,6 +166,25 @@ enum usbpd_ext_msg_type {
 	MSG_COUNTRY_CODES,
 };
 
+#if defined(CONFIG_TCT_PM7250_COMMON) 
+static const char * const usbpd_ext_msg_strings[] = {
+	"",
+	"Source_Capabilities_Extended",
+	"Status",
+	"Get_Battery_Cap",
+	"Get_Battery_Status",
+	"Battery_Capcity",
+	"Get_Manufacturer_Info",
+	"Manufacturer_Info",
+	"Security_Request",
+	"Security_Response",
+	"Firmware_Update_Request",
+	"Firmware_Update_Response",
+	"PPS_Status",
+	"Country_Info",
+	"Country_Codes",
+};
+#else
 static const char * const usbpd_ext_msg_strings[] = {
 	"", "Source_Capabilities_Extended", "Status", "Get_Battery_Cap",
 	"Get_Battery_Status", "Get_Manufacturer_Info", "Manufacturer_Info",
@@ -167,6 +192,7 @@ static const char * const usbpd_ext_msg_strings[] = {
 	"Firmware_Update_Response", "PPS_Status", "Country_Info",
 	"Country_Codes",
 };
+#endif
 
 static inline const char *msg_to_string(u8 id, bool is_data, bool is_ext)
 {
@@ -193,6 +219,38 @@ enum vdm_state {
 };
 
 static void *usbpd_ipc_log;
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+enum {
+	LOG_LEVEL_ERR = BIT(0),
+	LOG_LEVEL_DEBUG = BIT(1),
+	LOG_LEVEL_ALL = 0xFF,
+};
+
+static int pdlog = CONFIG_USB_PD_LOG_LVL;
+module_param(pdlog, int, S_IRUGO|S_IWUSR);
+
+#define usbpd_err(dev, fmt, ...) \
+	do { \
+		if (pdlog & LOG_LEVEL_ERR) { \
+			ipc_log_string(usbpd_ipc_log, "%s(): " fmt, __func__, \
+					##__VA_ARGS__); \
+			pr_err_ratelimited("%s: " fmt, __func__, ##__VA_ARGS__); \
+		} \
+	} while (0)
+
+#define usbpd_dbg(dev, fmt, ...) \
+	do { \
+		if (pdlog & LOG_LEVEL_DEBUG) \
+			ipc_log_string(usbpd_ipc_log, "%s(): " fmt, __func__, \
+					##__VA_ARGS__); \
+			pr_debug("%s: " fmt, __func__, ##__VA_ARGS__); \
+	} while (0)
+
+#define usbpd_info usbpd_dbg
+#define usbpd_warn usbpd_dbg
+#else
 #define usbpd_dbg(dev, fmt, ...) do { \
 	ipc_log_string(usbpd_ipc_log, "%s: %s: " fmt, dev_name(dev), __func__, \
 			##__VA_ARGS__); \
@@ -216,8 +274,15 @@ static void *usbpd_ipc_log;
 			##__VA_ARGS__); \
 	dev_err(dev, fmt, ##__VA_ARGS__); \
 	} while (0)
+#endif
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+#define NUM_LOG_PAGES		(30)
+#else
 #define NUM_LOG_PAGES		10
+#endif
 
 /* Timeouts (in ms) */
 #define ERROR_RECOVERY_TIME	25
@@ -347,13 +412,32 @@ static void *usbpd_ipc_log;
 #define ID_HDR_PRODUCT_AMA	5
 #define ID_HDR_PRODUCT_VPD	6
 
-/* params for usb_blocking_sync */
-#define STOP_USB_HOST		0
-#define START_USB_HOST		1
-
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+#define PD_MAX_FIXED_9V_CURRENT	1500
+#define PD_MAX_FIXED_5V_CURRENT	2000
+#define PD_MAX_AUG_9V_CURRENT	2000000
+#define PD_MAX_AUG_10V_VOLTAGE	10000000
+#endif
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+#define PD_MIN_SINK_CURRENT	500
+#else
 #define PD_MIN_SINK_CURRENT	900
+#endif
 
+/* params for usb_blocking_sync */
+#define STOP_USB_HOST           0
+#define START_USB_HOST          1
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+static const u32 default_src_caps[] = { 0x26019032 };	/* VSafe5V @ 0.5A */
+#else
 static const u32 default_src_caps[] = { 0x36019096 };	/* VSafe5V @ 1.5A */
+#endif
+
 static const u32 default_snk_caps[] = { 0x2601912C };	/* VSafe5V @ 3A */
 
 struct vdm_tx {
@@ -541,6 +625,12 @@ static unsigned int get_connector_type(struct usbpd *pd)
 
 static inline void stop_usb_host(struct usbpd *pd)
 {
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	usbpd_err(&pd->dev, "stop usb host \n");
+#endif
+
 	extcon_set_state_sync(pd->extcon, EXTCON_USB_HOST, 0);
 }
 
@@ -550,11 +640,23 @@ static inline void start_usb_host(struct usbpd *pd, bool ss)
 	union extcon_property_value val;
 	int ret = 0;
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	usbpd_err(&pd->dev, "start usb host with ss:%d, cc=%d\n", ss, cc);
+#endif
+
 	val.intval = (cc == ORIENTATION_CC2);
 	extcon_set_property(pd->extcon, EXTCON_USB_HOST,
 			EXTCON_PROP_USB_TYPEC_POLARITY, val);
 
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
 	val.intval = ss;
+#elif defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	val.intval = 0;
+#else
+	val.intval = ss;
+#endif
 	extcon_set_property(pd->extcon, EXTCON_USB_HOST,
 			EXTCON_PROP_USB_SS, val);
 
@@ -570,6 +672,12 @@ static inline void start_usb_host(struct usbpd *pd, bool ss)
 
 static inline void stop_usb_peripheral(struct usbpd *pd)
 {
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	usbpd_err(&pd->dev, "stop usb peripheral \n");
+#endif
+
 	extcon_set_state_sync(pd->extcon, EXTCON_USB, 0);
 }
 
@@ -578,14 +686,31 @@ static inline void start_usb_peripheral(struct usbpd *pd)
 	enum plug_orientation cc = usbpd_get_plug_orientation(pd);
 	union extcon_property_value val;
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	usbpd_err(&pd->dev, "start usb peripheral with cc=%d\n", cc);
+#endif
+
 	val.intval = (cc == ORIENTATION_CC2);
 	extcon_set_property(pd->extcon, EXTCON_USB,
 			EXTCON_PROP_USB_TYPEC_POLARITY, val);
-
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
 	val.intval = 1;
+#elif defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	val.intval = 0;
+#else
+	val.intval = 1;
+#endif
 	extcon_set_property(pd->extcon, EXTCON_USB, EXTCON_PROP_USB_SS, val);
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	val.intval = 0;
+#else
 	val.intval = pd->typec_mode > POWER_SUPPLY_TYPEC_SOURCE_DEFAULT ? 1 : 0;
+#endif
 	extcon_set_property(pd->extcon, EXTCON_USB,
 			EXTCON_PROP_USB_TYPEC_MED_HIGH_CURRENT, val);
 
@@ -840,6 +965,12 @@ static int pd_send_ext_msg(struct usbpd *pd, u8 msg_type,
 	return 0;
 }
 
+/* Begin added by hailong.chen for task 9661358 on 2020-09-15 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+static int trigger_tx_msg(struct usbpd *pd, bool *msg_tx_flag);
+static bool get_pdp_succeed = false;
+#endif
+/* End added by hailong.chen for task 9661358 on 2020-09-15 */
 static int pd_select_pdo(struct usbpd *pd, int pdo_pos, int uv, int ua)
 {
 	int curr;
@@ -847,6 +978,12 @@ static int pd_select_pdo(struct usbpd *pd, int pdo_pos, int uv, int ua)
 	bool mismatch = false;
 	u8 type;
 	u32 pdo = pd->received_pdos[pdo_pos - 1];
+/* Begin added by hailong.chen for task 9661358 on 2020-09-15 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	u32 pdp = 0;
+	int pdp_curr = 0;
+#endif
+/* End added by hailong.chen for task 9661358 on 2020-09-15 */
 
 	type = PD_SRC_PDO_TYPE(pdo);
 	if (type == PD_SRC_PDO_TYPE_FIXED) {
@@ -863,6 +1000,21 @@ static int pd_select_pdo(struct usbpd *pd, int pdo_pos, int uv, int ua)
 
 		pd->requested_voltage =
 			PD_SRC_PDO_FIXED_VOLTAGE(pdo) * 50 * 1000;
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+		if (pd->requested_voltage > 5000000
+			&& curr > PD_MAX_FIXED_9V_CURRENT) {
+			curr = PD_MAX_FIXED_9V_CURRENT;
+			max_current = PD_MAX_FIXED_9V_CURRENT;
+		} else if (pd->requested_voltage <= 5000000
+			&& curr > PD_MAX_FIXED_5V_CURRENT) {
+			curr = PD_MAX_FIXED_5V_CURRENT;
+			max_current = PD_MAX_FIXED_5V_CURRENT;
+		}
+#endif
+
 		pd->rdo = PD_RDO_FIXED(pdo_pos, 0, mismatch, 1, 1, curr / 10,
 				max_current / 10);
 	} else if (type == PD_SRC_PDO_TYPE_AUGMENTED) {
@@ -873,6 +1025,36 @@ static int pd_select_pdo(struct usbpd *pd, int pdo_pos, int uv, int ua)
 					uv, ua);
 			return -EINVAL;
 		}
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+		if (ua > PD_MAX_AUG_9V_CURRENT) {
+			ua = PD_MAX_AUG_9V_CURRENT;
+		}
+		if (uv > PD_MAX_AUG_10V_VOLTAGE) {
+			uv = PD_MAX_AUG_10V_VOLTAGE;
+		}
+#endif
+
+/* Begin added by hailong.chen for task 9661358 on 2020-09-15 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+		if (pd->spec_rev != USBPD_REV_20) {
+			if (!get_pdp_succeed) {
+				if (!trigger_tx_msg(pd, &pd->send_get_src_cap_ext))
+					get_pdp_succeed = true;
+			}
+			pdp = (u32)(pd->src_cap_ext_db[PD_SRC_CAP_EXT_DB_LEN-1] * 1000);
+			if (pdp) {
+				pdp_curr = pdp / (uv / 20000) * 50000;
+				if (ua > pdp_curr) {
+					ua = pdp_curr;
+					usbpd_dbg(&pd->dev, "pdp=%dW,pdp_curr=%dmA\n", pdp / 10000, pdp_curr / 1000);
+				}
+			}
+		}
+#endif
+/* End added by hailong.chen for task 9661358 on 2020-09-15 */
 
 		curr = ua / 1000;
 		pd->requested_voltage = uv;
@@ -2015,15 +2197,34 @@ static int enable_vbus(struct usbpd *pd)
 	if (!pd->vbus) {
 		pd->vbus = devm_regulator_get(pd->dev.parent, "vbus");
 		if (IS_ERR(pd->vbus)) {
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+			pd->vbus = NULL;
+#endif
 			usbpd_err(&pd->dev, "Unable to get vbus\n");
 			return -EAGAIN;
 		}
 	}
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	if (!pd->vbus_enabled) {
+		usbpd_err(&pd->dev, "[Enable]:otg_vbus\n");
+		ret = regulator_enable(pd->vbus);
+		if (ret)
+			usbpd_err(&pd->dev, "Unable to enable vbus (%d)\n", ret);
+
+		pd->vbus_enabled = true;
+	}
+#else
 	ret = regulator_enable(pd->vbus);
 	if (ret)
 		usbpd_err(&pd->dev, "Unable to enable vbus (%d)\n", ret);
 	else
 		pd->vbus_enabled = true;
+#endif
 
 	count = 10;
 	/*
@@ -3398,12 +3599,27 @@ static void handle_state_vcs_wait_for_vconn(struct usbpd *pd,
 /* Enters new state and executes actions on entry */
 static void usbpd_set_state(struct usbpd *pd, enum usbpd_state next_state)
 {
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	usbpd_dbg(&pd->dev, "cs: %d->%d\n",
+			pd->current_state, next_state);
+	usbpd_dbg(&pd->dev, "pr:%d, dr:%d, tm:%d, ips:%d, hrr:%d\n",
+			pd->current_pr, pd->current_dr, 
+			pd->typec_mode, pd->in_pr_swap, 
+			pd->hard_reset_recvd);
+#endif
+
 	if (pd->hard_reset_recvd) /* let usbpd_sm handle it */
 		return;
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if !defined(CONFIG_TCT_PM7250_COMMON) && !defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
 	usbpd_dbg(&pd->dev, "%s -> %s\n",
 			usbpd_state_strings[pd->current_state],
 			usbpd_state_strings[next_state]);
+#endif
 
 	pd->current_state = next_state;
 
@@ -3484,6 +3700,12 @@ static void handle_disconnect(struct usbpd *pd)
 		pd->pd_phy_opened = false;
 	}
 
+/* Begin added by hailong.chen for task 9661358 on 2020-09-15 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	get_pdp_succeed = false;
+	memset(&pd->src_cap_ext_db, 0, sizeof(pd->src_cap_ext_db));
+#endif
+/* End added by hailong.chen for task 9661358 on 2020-09-15 */
 	pd->in_pr_swap = false;
 	pd->pd_connected = false;
 	pd->in_explicit_contract = false;
@@ -3508,15 +3730,27 @@ static void handle_disconnect(struct usbpd *pd)
 			POWER_SUPPLY_PROP_PD_ACTIVE, &val);
 
 	if (pd->vbus_enabled) {
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+		usbpd_err(&pd->dev, "[Disable]:otg_vbus\n");
+#endif
 		regulator_disable(pd->vbus);
 		pd->vbus_enabled = false;
 	}
 
 	reset_vdm_state(pd);
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	stop_usb_host(pd);
+	stop_usb_peripheral(pd);
+#else
 	if (pd->current_dr == DR_UFP)
 		stop_usb_peripheral(pd);
 	else if (pd->current_dr == DR_DFP)
 		stop_usb_host(pd);
+#endif
 
 	pd->current_dr = DR_NONE;
 
@@ -3629,6 +3863,14 @@ static void usbpd_sm(struct work_struct *w)
 		list_del(&rx_msg->entry);
 	}
 	spin_unlock_irqrestore(&pd->rx_lock, flags);
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	if(rx_msg)
+		usbpd_dbg(&pd->dev, "rx_msg={%04x,%04x}\n",
+				rx_msg->hdr, rx_msg->data_len);
+#endif
 
 	/* Disconnect? */
 	if (pd->current_pr == PR_NONE) {
@@ -3745,8 +3987,14 @@ static int usbpd_process_typec_mode(struct usbpd *pd,
 
 		pd->current_pr = PR_SINK;
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+		eval.intval = 0;
+#else
 		eval.intval = typec_mode > POWER_SUPPLY_TYPEC_SOURCE_DEFAULT ?
 				1 : 0;
+#endif
 		extcon_set_property(pd->extcon, EXTCON_USB,
 				EXTCON_PROP_USB_TYPEC_MED_HIGH_CURRENT, eval);
 		break;
@@ -3765,8 +4013,21 @@ static int usbpd_process_typec_mode(struct usbpd *pd,
 		break;
 
 	case POWER_SUPPLY_TYPEC_SINK_DEBUG_ACCESSORY:
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+		usbpd_info(&pd->dev, "Type-C Sink Debug Accessory connected\n");
+#else
 		usbpd_info(&pd->dev, "Type-C Debug Accessory connected\n");
+#endif
 		break;
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	case POWER_SUPPLY_TYPEC_SOURCE_DEBUG_ACCESSORY:
+		usbpd_info(&pd->dev, "Type-C Source Debug Accessory connected\n");
+		break;
+#endif
 	case POWER_SUPPLY_TYPEC_SINK_AUDIO_ADAPTER:
 		usbpd_info(&pd->dev, "Type-C Analog Audio Adapter connected\n");
 		break;
@@ -3817,9 +4078,16 @@ static int psy_changed(struct notifier_block *nb, unsigned long evt, void *ptr)
 			return ret;
 		}
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+		if (val.intval == POWER_SUPPLY_TYPE_USB ||
+			val.intval == POWER_SUPPLY_TYPE_USB_CDP) {
+#else
 		if (val.intval == POWER_SUPPLY_TYPE_USB ||
 			val.intval == POWER_SUPPLY_TYPE_USB_CDP ||
 			val.intval == POWER_SUPPLY_TYPE_USB_FLOAT) {
+#endif
 			usbpd_dbg(&pd->dev, "typec mode:%d type:%d\n",
 				typec_mode, val.intval);
 			pd->typec_mode = typec_mode;
@@ -3918,6 +4186,15 @@ static int usbpd_typec_dr_set(const struct typec_capability *cap,
 	bool do_swap = false;
 	int ret;
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	if (1) {
+		pr_err("Not support dr set\n");
+		return -ENOTSUPP;
+	}
+#endif
+
 	usbpd_dbg(&pd->dev, "Setting data role to %d\n", role);
 
 	if (role == TYPEC_HOST) {
@@ -3955,6 +4232,15 @@ static int usbpd_typec_pr_set(const struct typec_capability *cap,
 	bool do_swap = false;
 	int ret;
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	if (1) {
+		pr_err("Not support pr set\n");
+		return -ENOTSUPP;
+	}
+#endif
+
 	usbpd_dbg(&pd->dev, "Setting power role to %d\n", role);
 
 	if (role == TYPEC_SOURCE) {
@@ -3991,6 +4277,15 @@ static int usbpd_typec_port_type_set(const struct typec_capability *cap,
 	struct usbpd *pd = container_of(cap, struct usbpd, typec_caps);
 	union power_supply_propval value;
 	int wait_count = 5;
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	if (1) {
+		pr_err("Not support mode set\n");
+		return -ENOTSUPP;
+	}
+#endif
 
 	usbpd_dbg(&pd->dev, "Setting mode to %d\n", type);
 
@@ -4105,7 +4400,13 @@ static ssize_t initial_pr_show(struct device *dev,
 	struct usbpd *pd = dev_get_drvdata(dev);
 	const char *pr = "none";
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	if (pd->typec_mode >= POWER_SUPPLY_TYPEC_SOURCE_DEBUG_ACCESSORY)
+#else
 	if (pd->typec_mode >= POWER_SUPPLY_TYPEC_SOURCE_DEFAULT)
+#endif
 		pr = "sink";
 	else if (pd->typec_mode >= POWER_SUPPLY_TYPEC_SINK)
 		pr = "source";
@@ -4135,7 +4436,13 @@ static ssize_t initial_dr_show(struct device *dev,
 	struct usbpd *pd = dev_get_drvdata(dev);
 	const char *dr = "none";
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	if (pd->typec_mode >= POWER_SUPPLY_TYPEC_SOURCE_DEBUG_ACCESSORY)
+#else
 	if (pd->typec_mode >= POWER_SUPPLY_TYPEC_SOURCE_DEFAULT)
+#endif
 		dr = "ufp";
 	else if (pd->typec_mode >= POWER_SUPPLY_TYPEC_SINK)
 		dr = "dfp";
@@ -4297,6 +4604,11 @@ static ssize_t select_pdo_store(struct device *dev,
 		goto out;
 	}
 
+#if defined(CONFIG_TCT_PM7250_COMMON)
+	usbpd_dbg(&pd->dev, "userspace write:%d,%d,%d,%d\n",
+			src_cap_id, pdo, uv, ua);
+#endif
+
 	ret = pd_select_pdo(pd, pdo, uv, ua);
 	if (ret)
 		goto out;
@@ -4316,7 +4628,13 @@ static ssize_t select_pdo_store(struct device *dev,
 	/* determine if request was accepted/rejected */
 	if (pd->selected_pdo != pd->requested_pdo ||
 			pd->current_voltage != pd->requested_voltage) {
+#if defined(CONFIG_TCT_PM7250_COMMON)
+		usbpd_err(&pd->dev, "request rejected: %d,%d,%d,%d\n",
+					pd->selected_pdo, pd->requested_pdo,
+					pd->current_voltage, pd->requested_voltage);
+#else
 		usbpd_err(&pd->dev, "request rejected\n");
+#endif
 		ret = -ECONNREFUSED;
 	}
 
@@ -4424,7 +4742,12 @@ static int trigger_tx_msg(struct usbpd *pd, bool *msg_tx_flag)
 
 	/* Only allowed if we are already in explicit sink contract */
 	if (pd->current_state != PE_SNK_READY) {
+#if defined(CONFIG_TCT_PM7250_COMMON)
+		usbpd_err(&pd->dev, "Cannot send msg:%d,%d\n",
+					pd->current_state, pd->typec_mode);
+#else
 		usbpd_err(&pd->dev, "Cannot send msg\n");
+#endif
 		ret = -EBUSY;
 		goto out;
 	}

@@ -58,6 +58,12 @@ static int ufshcd_wb_buf_flush_disable(struct ufs_hba *hba);
 static bool ufshcd_wb_is_buf_flush_needed(struct ufs_hba *hba);
 static int ufshcd_wb_toggle_flush_during_h8(struct ufs_hba *hba, bool set);
 
+/*Begin add by dingting.meng for T-9869946,on 1/9/2020*/
+char tct_desc_buf[PAGE_SIZE + 1] = {'\0'};
+static struct ufs_hba *tct_ufs_hba = NULL;
+static ssize_t tct_get_ufs_product_name(struct ufs_hba *hba,u8 *buf);
+/*End add by dingting.meng for T-9869946,on 1/9/2020*/
+
 #ifdef CONFIG_DEBUG_FS
 
 static int ufshcd_tag_req_type(struct request *rq)
@@ -3391,6 +3397,17 @@ static void ufshcd_disable_intr(struct ufs_hba *hba, u32 intrs)
 	ufshcd_writel(hba, set, REG_INTERRUPT_ENABLE);
 }
 
+#ifdef CONFIG_TCT_UI_TURBO
+static inline bool use_cmd_hoq(struct scsi_cmnd *cmd)
+{
+	struct request *rq;
+	if (!cmd || !cmd->request)
+		return false;
+	rq = cmd->request;
+	return req_is_ui(rq) && req_is_read(rq);
+}
+#endif
+
 /**
  * ufshcd_prepare_req_desc_hdr() - Fills the requests header
  * descriptor according to request
@@ -3417,6 +3434,11 @@ static int ufshcd_prepare_req_desc_hdr(struct ufs_hba *hba,
 		data_direction = UTP_NO_DATA_TRANSFER;
 		*upiu_flags = UPIU_CMD_FLAGS_NONE;
 	}
+#ifdef CONFIG_TCT_UI_TURBO
+	/* use HoQ for read request from ui */
+	if (unlikely(use_cmd_hoq(lrbp->cmd)))
+		*upiu_flags |= UPIU_TASK_ATTR_HEADQ;
+#endif
 
 	dword_0 = data_direction | (lrbp->command_type
 				<< UPIU_COMMAND_TYPE_OFFSET);
@@ -11224,6 +11246,10 @@ int ufshcd_init(struct ufs_hba *hba, void __iomem *mmio_base, unsigned int irq)
 
 	ufs_sysfs_add_nodes(hba->dev);
 
+/*Begin add by dingting.meng for T-9869946,on 1/9/2020*/
+    tct_ufs_hba = hba;
+/*End add by dingting.meng for T-9869946,on 1/9/2020*/
+
 	return 0;
 
 out_remove_scsi_host:
@@ -11238,6 +11264,50 @@ out_error:
 	return err;
 }
 EXPORT_SYMBOL_GPL(ufshcd_init);
+
+/*Begin add by dingting.meng for T-9869946,on 1/9/2020*/
+static ssize_t tct_get_ufs_product_name(struct ufs_hba *hba,u8 *buf)
+{
+    u8 index;
+    int ret = 0;
+    int desc_len = QUERY_DESC_MAX_SIZE;
+    u8 *desc_buf;
+    desc_buf = kzalloc(QUERY_DESC_MAX_SIZE, GFP_ATOMIC);
+    if (!desc_buf)
+        return -ENOMEM;
+    pm_runtime_get_sync(hba->dev);
+    ret = ufshcd_query_descriptor_retry(hba,UPIU_QUERY_OPCODE_READ_DESC,QUERY_DESC_IDN_DEVICE,0,0,desc_buf,&desc_len);
+    if(ret)
+    {
+        ret = -EINVAL;
+        goto out;
+    }
+    index = desc_buf[DEVICE_DESC_PARAM_PRDCT_NAME];
+    memset(desc_buf, 0, QUERY_DESC_MAX_SIZE);
+    if (ufshcd_read_string_desc(hba, index, desc_buf,QUERY_DESC_MAX_SIZE,true))
+    {
+        ret = -EINVAL;
+        goto out;
+    }
+    ret = snprintf(buf, PAGE_SIZE, "%s",desc_buf + QUERY_DESC_HDR_SIZE);
+
+out:
+    pm_runtime_put_sync(hba->dev);
+    kfree(desc_buf);
+    return ret;
+}
+
+void get_dev_info_ufs(char *pdest)
+{
+    if(NULL == pdest)
+        return;
+
+    tct_get_ufs_product_name(tct_ufs_hba,tct_desc_buf);
+
+    memcpy(pdest,tct_desc_buf,64);
+}
+EXPORT_SYMBOL(get_dev_info_ufs);
+/*End add by dingting.meng for T-9869946,on 1/9/2020*/
 
 MODULE_AUTHOR("Santosh Yaragnavi <santosh.sy@samsung.com>");
 MODULE_AUTHOR("Vinayak Holikatti <h.vinayak@samsung.com>");

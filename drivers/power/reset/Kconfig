@@ -255,5 +255,13 @@ config POWER_RESET_SC27XX
 	  PMICs includes the SC2720, SC2721, SC2723, SC2730
 	  and SC2731 chips.
 
+# [TCTNB-SYS][CrashDump]Begin added by Alvin.Lee for XR9930881 on 2020/09/14
+config PANIC_REASON
+	bool "PANIC REASON"
+	depends on ARCH_MSM || ARCH_QCOM
+	depends on POWER_RESET
+	help
+	  Dump the Panic reason to the share memory.
+# [TCTNB-SYS][CrashDump]-End- added by Alvin.Lee for XR9930881 on 2020/09/14
 endif
 

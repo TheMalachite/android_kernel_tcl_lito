@@ -35,6 +35,13 @@
 
 #include <linux/platform_data/ina2xx.h>
 
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+#include <linux/iio/driver.h>
+#include <linux/iio/machine.h>
+#include <linux/gpio.h>
+#include <linux/of_gpio.h>
+#endif
+
 /* INA2XX registers definition */
 #define INA2XX_CONFIG                   0x00
 #define INA2XX_SHUNT_VOLTAGE            0x01	/* readonly */
@@ -56,6 +63,12 @@
 #define INA226_CONFIG_DEFAULT           0x4327
 #define INA226_DEFAULT_AVG              4
 #define INA226_DEFAULT_IT		1110
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+#define INA231_CONFIG_DEFAULT           0x4127
+#define INA231_DEFAULT_AVG              64
+#define INA231_DEFAULT_IT		8244
+#endif
 
 #define INA2XX_RSHUNT_DEFAULT           10000
 
@@ -140,6 +153,8 @@ struct ina2xx_chip_info {
 	const struct ina2xx_config *config;
 	struct mutex state_lock;
 	unsigned int shunt_resistor_uohm;
+	int batt2_rctl_gpio;
+	int batt2_rctl_gpio_polarity;
 	int avg;
 	int int_time_vbus; /* Bus voltage integration time uS */
 	int int_time_vshunt; /* Shunt voltage integration time uS */
@@ -152,6 +167,16 @@ struct ina2xx_chip_info {
 		u64 ts __aligned(8);
 	} scan;
 };
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+static struct iio_map ina2xxx_maps[] = {
+	IIO_MAP("ina_current", "battery", "sub_battery_current"),
+	IIO_MAP("ina_voltage", "battery", "main_battery_voltage"),
+	{ }
+};
+
+static struct ina2xx_chip_info *this_chip = NULL;
+#endif
 
 static const struct ina2xx_config ina2xx_config[] = {
 	[ina219] = {
@@ -643,6 +668,27 @@ static ssize_t ina2xx_shunt_resistor_store(struct device *dev,
 	} \
 }
 
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+#define INA231_CHAN(_type, _index, _name, _address) { \
+	.type = (_type), \
+	.address = (_address), \
+	.indexed = 1, \
+	.channel = (_index), \
+	.info_mask_separate = BIT(IIO_CHAN_INFO_RAW) | \
+			      BIT(IIO_CHAN_INFO_SCALE), \
+	.info_mask_shared_by_dir = BIT(IIO_CHAN_INFO_SAMP_FREQ) | \
+				   BIT(IIO_CHAN_INFO_OVERSAMPLING_RATIO), \
+	.scan_index = (_index), \
+	.scan_type = { \
+		.sign = 'u', \
+		.realbits = 16, \
+		.storagebits = 16, \
+		.endianness = IIO_CPU, \
+	}, \
+	.datasheet_name = _name,			\
+}
+#endif
+
 /*
  * Sampling Freq is a consequence of the integration times of
  * the Voltage channels.
@@ -688,7 +734,37 @@ static ssize_t ina2xx_shunt_resistor_store(struct device *dev,
 	} \
 }
 
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+#define INA231_CHAN_VOLTAGE(_index, _name, _address) { \
+	.type = IIO_VOLTAGE, \
+	.address = (_address), \
+	.indexed = 1, \
+	.channel = (_index), \
+	.info_mask_separate = BIT(IIO_CHAN_INFO_RAW) | \
+			      BIT(IIO_CHAN_INFO_SCALE) | \
+			      BIT(IIO_CHAN_INFO_INT_TIME), \
+	.info_mask_shared_by_dir = BIT(IIO_CHAN_INFO_SAMP_FREQ) | \
+				   BIT(IIO_CHAN_INFO_OVERSAMPLING_RATIO), \
+	.scan_index = (_index), \
+	.scan_type = { \
+		.sign = 'u', \
+		.realbits = 16, \
+		.storagebits = 16, \
+		.endianness = IIO_LE, \
+	}, \
+	.datasheet_name = _name,			\
+}
+#endif
 
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+static const struct iio_chan_spec ina231_channels[] = {
+	INA231_CHAN_VOLTAGE(0, "shunt_voltage", INA2XX_SHUNT_VOLTAGE),
+	INA231_CHAN_VOLTAGE(1, "ina_voltage", INA2XX_BUS_VOLTAGE),
+	INA231_CHAN(IIO_POWER, 2, "ina_power", INA2XX_POWER),
+	INA231_CHAN(IIO_CURRENT, 3, "ina_current", INA2XX_CURRENT),
+	IIO_CHAN_SOFT_TIMESTAMP(4),
+};
+#else
 static const struct iio_chan_spec ina226_channels[] = {
 	INA226_CHAN_VOLTAGE(0, INA2XX_SHUNT_VOLTAGE),
 	INA226_CHAN_VOLTAGE(1, INA2XX_BUS_VOLTAGE),
@@ -696,6 +772,7 @@ static const struct iio_chan_spec ina226_channels[] = {
 	INA226_CHAN(IIO_CURRENT, 3, INA2XX_CURRENT),
 	IIO_CHAN_SOFT_TIMESTAMP(4),
 };
+#endif
 
 static const struct iio_chan_spec ina219_channels[] = {
 	INA219_CHAN_VOLTAGE(0, INA2XX_SHUNT_VOLTAGE, 0),
@@ -946,6 +1023,23 @@ static int ina2xx_init(struct ina2xx_chip_info *chip, unsigned int config)
 	return ina2xx_set_calibration(chip);
 }
 
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+void ina2xx_rbatt_enable(bool enable)
+{
+	int rc;
+
+	if (!this_chip)
+		return;
+
+	rc = gpio_direction_output(this_chip->batt2_rctl_gpio,
+			!(this_chip->batt2_rctl_gpio_polarity ^ enable));
+	pr_err("batt2_rctl_gpio output %s, rc=%d\n",
+				enable ? "high" : "low", rc);
+	return;
+}
+EXPORT_SYMBOL_GPL(ina2xx_rbatt_enable);
+#endif
+
 static int ina2xx_probe(struct i2c_client *client,
 			const struct i2c_device_id *id)
 {
@@ -961,6 +1055,37 @@ static int ina2xx_probe(struct i2c_client *client,
 		return -ENOMEM;
 
 	chip = iio_priv(indio_dev);
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	if (client->dev.of_node) {
+		enum of_gpio_flags flags;
+		chip->batt2_rctl_gpio = of_get_named_gpio_flags(
+				client->dev.of_node, "batt2-rctl-gpio",
+				0, &flags);
+		if (!gpio_is_valid(chip->batt2_rctl_gpio)) {
+			pr_err("batt2_rctl_gpio get fail:%d\n",
+						chip->batt2_rctl_gpio);
+			return -EINVAL;
+		} else {
+			chip->batt2_rctl_gpio_polarity = !(flags & OF_GPIO_ACTIVE_LOW);
+			ret = devm_gpio_request(&client->dev, chip->batt2_rctl_gpio,
+							"batt2_rctl_gpio");
+			if (ret) {
+				pr_err("unable to request batt2_rctl_gpio[%d]\n",
+							chip->batt2_rctl_gpio);
+				return -EBUSY;
+			}
+			ret = gpio_direction_output(chip->batt2_rctl_gpio,
+					!(chip->batt2_rctl_gpio_polarity ^ 0));
+			if (ret) {
+				pr_err("batt2_rctl_gpio init LOW failed %d\n", ret);
+				return -EIO;
+			}
+			pr_info("batt2_rctl_gpio: %d,%d\n", chip->batt2_rctl_gpio,
+					chip->batt2_rctl_gpio_polarity);
+		}
+	}
+#endif
 
 	/* This is only used for device removal purposes. */
 	i2c_set_clientdata(client, indio_dev);
@@ -998,9 +1123,21 @@ static int ina2xx_probe(struct i2c_client *client,
 	val = chip->config->config_default;
 
 	if (id->driver_data == ina226) {
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+		ina226_set_average(chip, INA231_DEFAULT_AVG, &val);
+#else
 		ina226_set_average(chip, INA226_DEFAULT_AVG, &val);
+#endif
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+		ina226_set_int_time_vbus(chip, INA231_DEFAULT_IT, &val);
+#else
 		ina226_set_int_time_vbus(chip, INA226_DEFAULT_IT, &val);
+#endif
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+		ina226_set_int_time_vshunt(chip, INA231_DEFAULT_IT, &val);
+#else
 		ina226_set_int_time_vshunt(chip, INA226_DEFAULT_IT, &val);
+#endif
 	} else {
 		chip->avg = 1;
 		ina219_set_int_time_vbus(chip, INA219_DEFAULT_IT, &val);
@@ -1019,8 +1156,13 @@ static int ina2xx_probe(struct i2c_client *client,
 	indio_dev->dev.parent = &client->dev;
 	indio_dev->dev.of_node = client->dev.of_node;
 	if (id->driver_data == ina226) {
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+		indio_dev->channels = ina231_channels;
+		indio_dev->num_channels = ARRAY_SIZE(ina231_channels);
+#else
 		indio_dev->channels = ina226_channels;
 		indio_dev->num_channels = ARRAY_SIZE(ina226_channels);
+#endif
 		indio_dev->info = &ina226_info;
 	} else {
 		indio_dev->channels = ina219_channels;
@@ -1030,13 +1172,31 @@ static int ina2xx_probe(struct i2c_client *client,
 	indio_dev->name = id->name;
 	indio_dev->setup_ops = &ina2xx_setup_ops;
 
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	ret = iio_map_array_register(indio_dev, ina2xxx_maps);
+	if (ret < 0) {
+		dev_err(&indio_dev->dev, "failed to register IIO maps: %d\n", ret);
+		return ret;
+	}
+#endif
+
 	buffer = devm_iio_kfifo_allocate(&indio_dev->dev);
 	if (!buffer)
 		return -ENOMEM;
 
 	iio_device_attach_buffer(indio_dev, buffer);
 
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	ret = iio_device_register(indio_dev);
+	if (ret) {
+		dev_err(&indio_dev->dev, "failed to register IIO %d\n", ret);
+		return ret;
+	}
+	this_chip = chip;
+	return 0;
+#else
 	return iio_device_register(indio_dev);
+#endif
 }
 
 static int ina2xx_remove(struct i2c_client *client)

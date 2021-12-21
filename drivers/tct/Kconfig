@@ -1,0 +1,60 @@
+# History 1.0 added by hailong.chen for task 7787483 on 2019-05-23
+# History 2.0 added by hailong.chen for task 7805046 on 2019-05-25
+# History 3.0 added by hailong.chen for task 9551005 on 2020-07-09
+
+config TCT_DEVICEINFO
+	bool "TCT_DEVICEINFO"
+	default n
+	help
+	  Say Y here to enable TCT_DEVICEINFO.
+
+config TCT_UI_TURBO
+	bool "ui turbo v1.0"
+	default y
+
+config TCT_STAT
+	bool "tct statistics feature"
+	depends on TCT_UI_TURBO
+	default y
+
+config TCT_PERF
+	bool "tct performace control device"
+	depends on TCT_UI_TURBO
+	default y
+
+#config MTK_ROBUST
+#	bool "CONFIG_MTK_ROBUST for MediaTek package"
+#	default n
+#	help
+#	It support different type sensor
+#	in this platform. If this option
+#	is set, it will support ROBUST.
+
+menuconfig TCT
+	bool "TCT"
+	default n
+	help
+	  Say Y here to enable TCT.
+
+if TCT
+
+config TCT_DTS
+	bool "TCT_DTS"
+	default n
+	help
+	  Say Y here to enable TCT_DTS.
+
+config TCT_PROJECT_IRVINE
+	bool "enable irvine project"
+	depends on ARCH_LAGOON
+	default n
+	select TCT_DTS
+	help
+	  Say Y here to enable TCT_PROJECT_IRVINE.
+
+endif
+
+config TCT_DISPLAY
+       bool "Enable tct display"
+       default n
+

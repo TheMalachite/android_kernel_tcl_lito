@@ -231,7 +231,58 @@ static ssize_t max_brightness_show(struct device *dev,
 
 	return sprintf(buf, "%d\n", bd->props.max_brightness);
 }
+
+/* MODIFIED-BEGIN by YuBin,  lcd quiet therm config*/
+#ifdef CONFIG_TCT_LITO_COMMON
+int backlight_device_set_max_brightness(struct backlight_device *bd,
+				    unsigned long max_brightness)
+{
+	int rc = -ENXIO;
+
+	mutex_lock(&bd->ops_lock);
+	if (bd->ops) {
+		//if (max_brightness > bd->props.max_brightness)
+		//	rc = -EINVAL;
+		//else {
+			pr_debug("set max_brightness to %lu\n", max_brightness);
+			bd->props.max_brightness = max_brightness;
+			rc = backlight_update_status(bd);
+		//}
+	}
+	mutex_unlock(&bd->ops_lock);
+
+	backlight_generate_event(bd, BACKLIGHT_UPDATE_SYSFS);
+
+	return rc;
+}
+EXPORT_SYMBOL(backlight_device_set_max_brightness);
+
+static ssize_t max_brightness_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	int rc;
+	struct backlight_device *bd = to_backlight_device(dev);
+	unsigned long max_brightness;
+
+	rc = kstrtoul(buf, 0, &max_brightness);
+	if (rc)
+		return rc;
+
+	bd->usr_brightness_req = max_brightness;
+	max_brightness = (max_brightness <= bd->thermal_brightness_limit) ?
+				bd->usr_brightness_req :
+				bd->thermal_brightness_limit;
+
+	rc = backlight_device_set_max_brightness(bd, max_brightness);
+
+	return rc ? rc : count;
+}
+
+static DEVICE_ATTR_RW(max_brightness);
+#else
 static DEVICE_ATTR_RO(max_brightness);
+#endif
+/* MODIFIED-END by YuBin*/
 
 static ssize_t actual_brightness_show(struct device *dev,
 		struct device_attribute *attr, char *buf)

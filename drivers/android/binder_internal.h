@@ -117,6 +117,11 @@ DEFINE_SHOW_ATTRIBUTE(binder_transactions);
 int binder_transaction_log_show(struct seq_file *m, void *unused);
 DEFINE_SHOW_ATTRIBUTE(binder_transaction_log);
 
+//[TCT-ROM][PERF]Begin Add by jingyuan.wei for freezer on 2020/09/14
+int binder_freeze_show(struct seq_file *m, void *unused);
+DEFINE_SHOW_ATTRIBUTE(binder_freeze);
+//[TCT-ROM][PERF]End Add by jingyuan.wei for freezer on 2020/09/14
+
 struct binder_transaction_log_entry {
 	int debug_id;
 	int debug_id_done;

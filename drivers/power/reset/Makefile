@@ -30,3 +30,6 @@ obj-$(CONFIG_POWER_RESET_ZX) += zx-reboot.o
 obj-$(CONFIG_REBOOT_MODE) += reboot-mode.o
 obj-$(CONFIG_SYSCON_REBOOT_MODE) += syscon-reboot-mode.o
 obj-$(CONFIG_POWER_RESET_SC27XX) += sc27xx-poweroff.o
+# [TCTNB-SYS][CrashDump]Begin added by Alvin.Lee for XR9930881 on 2020/09/14
+obj-$(CONFIG_PANIC_REASON) += panic-reason.o
+# [TCTNB-SYS][CrashDump]-End- added by Alvin.Lee for XR9930881 on 2020/09/14

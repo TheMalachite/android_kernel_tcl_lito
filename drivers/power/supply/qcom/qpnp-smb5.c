@@ -3,6 +3,9 @@
  * Copyright (c) 2018-2021 The Linux Foundation. All rights reserved.
  */
 
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+#define pr_fmt(fmt) "[SMB5]: %s: " fmt, __func__
+#endif
 #include <linux/debugfs.h>
 #include <linux/delay.h>
 #include <linux/device.h>
@@ -227,6 +230,60 @@ struct smb5 {
 	struct smb_dt_props	dt;
 };
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+/* Begin modified by hailong.chen for task 9656602 on 2020-09-09 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+int thermal_disable = 0;
+#else
+static int thermal_disable = 0;
+#endif
+/* End modified by hailong.chen for task 9656602 on 2020-09-09 */
+module_param_named(
+	thermal_disable, thermal_disable,
+	int, S_IRUSR | S_IWUSR
+);
+
+static int fixtemp = 0;
+static int fixtemp_val = 250;
+module_param_named(
+	fixtemp_val, fixtemp_val,
+	int, S_IRUSR | S_IWUSR
+);
+
+static int stopchg_en = 1;
+module_param_named(
+	stopchg_en, stopchg_en,
+	int, S_IRUSR | S_IWUSR
+);
+static int safety_timer_en = 1;
+module_param_named(
+	safety_timer_en, safety_timer_en,
+	int, S_IRUSR | S_IWUSR
+);
+#endif
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+static int fake_sub_bcurrent = -EINVAL;
+module_param_named(
+	sub_bcurrent, fake_sub_bcurrent,
+	int, S_IRUSR | S_IWUSR
+);
+
+static int fake_sub_btemp = -EINVAL;
+module_param_named(
+	sub_btemp, fake_sub_btemp,
+	int, S_IRUSR | S_IWUSR
+);
+
+static int fake_main_vol = -EINVAL;
+module_param_named(
+	main_vol, fake_main_vol,
+	int, S_IRUSR | S_IWUSR
+);
+#endif
+
 static int __debug_mask;
 
 static ssize_t pd_disabled_show(struct device *dev, struct device_attribute
@@ -335,8 +392,17 @@ static int smb5_chg_config_init(struct smb5 *chip)
 		chip->chg.chg_param.smb_version = PM7250B_SUBTYPE;
 		chg->param = smb5_pm8150b_params;
 		chg->name = "pm7250b_charger";
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+		chg->hw_max_icl_ua = HW_ICL_MAX;
+		chg->uusb_moisture_protection_capable = false;
+		chg->main_fcc_max = PM6150_MAX_FCC_UA;
+		chg->wa_flags |= SW_THERM_REGULATION_WA | CHG_TERMINATION_WA;
+#else
 		chg->wa_flags |= CHG_TERMINATION_WA;
 		chg->uusb_moisture_protection_capable = true;
+#endif
 		break;
 	case PM6150_SUBTYPE:
 		chip->chg.chg_param.smb_version = PM6150_SUBTYPE;
@@ -504,6 +570,47 @@ static int smb5_parse_dt_misc(struct smb5 *chip, struct device_node *node)
 		}
 	}
 
+/* MODIFIED-BEGIN by jin.wang, 2020-04-07,BUG-9172506*/
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	if (of_find_property(node, "qcom,thermal-mitigation-lcdon", &byte_len)) {
+		chg->thermal_mitigation_lcdon = devm_kzalloc(chg->dev, byte_len,
+			GFP_KERNEL);
+
+		if (chg->thermal_mitigation_lcdon == NULL) {
+			dev_err(chg->dev, "thermal_mitigation_lcdon NULL\n");
+			chg->thermal_levels = 0;
+			return -ENOMEM;
+		}
+
+		if (chg->thermal_levels != (byte_len / sizeof(u32))) {
+			dev_err(chg->dev, "thermal on-off levels %d not equal\n",
+					chg->thermal_levels);
+			chg->thermal_levels = 0;
+			return -EINVAL;
+		}
+
+		rc = of_property_read_u32_array(node,
+				"qcom,thermal-mitigation-lcdon",
+				chg->thermal_mitigation_lcdon,
+				chg->thermal_levels);
+		if (rc < 0) {
+			dev_err(chg->dev,
+				"Couldn't read thermal-lcdon limits rc = %d\n", rc);
+			chg->thermal_levels = 0;
+			return rc;
+		}
+	} else if (chg->thermal_levels) {
+		/* if qcom,thermal-mitigation defined but not this one. */
+		dev_err(chg->dev,
+				"ERROR: thermal-lcdon must defined!\n");
+		chg->thermal_levels = 0;
+		//return -EINVAL;  // let boot up with debug later.
+	}
+#endif
+/* MODIFIED-END by jin.wang,BUG-9172506*/
+
 	rc = of_property_read_u32(node, "qcom,charger-temp-max",
 			&chg->charger_temp_max);
 	if (rc < 0)
@@ -575,6 +682,11 @@ static int smb5_parse_dt_misc(struct smb5 *chip, struct device_node *node)
 
 	chip->dt.disable_suspend_on_collapse = of_property_read_bool(node,
 					"qcom,disable-suspend-on-collapse");
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	chg->disable_suspend_on_collapse = chip->dt.disable_suspend_on_collapse;
+#endif
 	chg->smb_pull_up = -EINVAL;
 	of_property_read_u32(node, "qcom,smb-internal-pull-kohm",
 					&chg->smb_pull_up);
@@ -666,6 +778,43 @@ static int smb5_parse_dt_adc_channels(struct smb_charger *chg)
 	if (rc < 0)
 		return rc;
 
+/* Begin added by hailong.chen for task 9656602 on 2020-09-09 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	rc = smblib_get_iio_channel(chg, "v_i_int_ext", &chg->iio.v_i_int_ext_chan);
+	if (rc < 0)
+		return rc;
+#endif
+/* End added by hailong.chen for task 9656602 on 2020-09-09 */
+
+#if defined(CONFIG_TCT_OTTAWA_CHG_PATCH) || defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	rc = smblib_get_iio_channel(chg, "quiet_therm", &chg->iio.quiet_temp_chan);
+	if (rc < 0) {
+		chg->iio.quiet_temp_chan = NULL;
+		pr_err("quiet_therm channel get failed\n");
+	}
+#endif
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	rc = smblib_get_iio_channel(chg, "wpc_therm", &chg->iio.wpc_temp_chan);
+	if (rc < 0) {
+		chg->iio.wpc_temp_chan = NULL;
+		pr_err("wpc_temp_chan channel get failed\n");
+	}
+
+	rc = smblib_get_ina_iio_channel(chg, "sub_battery_current",
+						&chg->iio.sub_batt_i_chan);
+	if (rc < 0) {
+		chg->iio.sub_batt_i_chan = NULL;
+		pr_err("sub_batt_i_chan channel get failed\n");
+	}
+	rc = smblib_get_ina_iio_channel(chg, "main_battery_voltage",
+						&chg->iio.main_batt_v_chan);
+	if (rc < 0) {
+		chg->iio.main_batt_v_chan = NULL;
+		pr_err("main_batt_v_chan channel get failed\n");
+	}
+#endif
+
 	return 0;
 }
 
@@ -678,6 +827,10 @@ static int smb5_parse_dt_currents(struct smb5 *chip, struct device_node *node)
 			"qcom,fcc-max-ua", &chip->dt.batt_profile_fcc_ua);
 	if (rc < 0)
 		chip->dt.batt_profile_fcc_ua = -EINVAL;
+
+#if defined(CONFIG_TCT_CB)
+	chip->dt.batt_profile_fcc_ua = 1800000;
+#endif
 
 	rc = of_property_read_u32(node,
 				"qcom,usb-icl-ua", &chip->dt.usb_icl_ua);
@@ -900,6 +1053,9 @@ static int smb5_usb_get_prop(struct power_supply *psy,
 	switch (psp) {
 	case POWER_SUPPLY_PROP_PRESENT:
 		rc = smblib_get_prop_usb_present(chg, val);
+#if defined(CONFIG_TCT_CHG_AUTOTEST)
+		pr_err_ratelimited("TCTNB_PRESENT:%d\n", val->intval);
+#endif
 		break;
 	case POWER_SUPPLY_PROP_ONLINE:
 		rc = smblib_get_usb_online(chg, val);
@@ -930,6 +1086,9 @@ static int smb5_usb_get_prop(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_REAL_TYPE:
 		val->intval = chg->real_charger_type;
+#if defined(CONFIG_TCT_CHG_AUTOTEST)
+		pr_err_ratelimited("TCTNB_REALTYPE:%d\n", val->intval);
+#endif
 		break;
 	case POWER_SUPPLY_PROP_TYPEC_MODE:
 		rc = smblib_get_usb_prop_typec_mode(chg, val);
@@ -1022,6 +1181,9 @@ static int smb5_usb_get_prop(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_THERM_ICL_LIMIT:
 		val->intval = get_client_vote(chg->usb_icl_votable,
 					THERMAL_THROTTLE_VOTER);
+#if defined(CONFIG_TCT_CHG_AUTOTEST)
+		pr_err_ratelimited("TCTNB_THRO_ICL:%d\n", val->intval);
+#endif
 		break;
 	case POWER_SUPPLY_PROP_ADAPTER_CC_MODE:
 		val->intval = chg->adapter_cc_mode;
@@ -1093,14 +1255,24 @@ static int smb5_usb_set_prop(struct power_supply *psy,
 		rc = smblib_set_prop_pd_in_hard_reset(chg, val);
 		break;
 	case POWER_SUPPLY_PROP_PD_USB_SUSPEND_SUPPORTED:
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+		chg->system_suspend_supported = false;
+#else
 		chg->system_suspend_supported = val->intval;
+#endif
 		break;
 	case POWER_SUPPLY_PROP_BOOST_CURRENT:
 		rc = smblib_set_prop_boost_current(chg, val);
 		break;
 	case POWER_SUPPLY_PROP_CTM_CURRENT_MAX:
+#if defined(CONFIG_TCT_PM7250_COMMON)
+		rc = -EINVAL;
+#else
 		rc = vote(chg->usb_icl_votable, CTM_VOTER,
 						val->intval >= 0, val->intval);
+#endif
 		break;
 	case POWER_SUPPLY_PROP_PR_SWAP:
 		rc = smblib_set_prop_pr_swap_in_progress(chg, val);
@@ -1119,6 +1291,17 @@ static int smb5_usb_set_prop(struct power_supply *psy,
 		power_supply_changed(chg->usb_psy);
 		break;
 	case POWER_SUPPLY_PROP_THERM_ICL_LIMIT:
+#if defined(CONFIG_TCT_PM7250_COMMON) && !defined(CONFIG_TCT_OTTAWA_CHG_PATCH)
+		return 0;
+#endif
+
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON) || defined(CONFIG_TCT_OTTAWA_CHG_PATCH)
+		if (thermal_disable) {
+			vote(chg->usb_icl_votable, THERMAL_THROTTLE_VOTER, false, 0);
+			return -EINVAL;
+		}
+#endif
+
 		if (!is_client_vote_enabled(chg->usb_icl_votable,
 						THERMAL_THROTTLE_VOTER)) {
 			chg->init_thermal_ua = get_effective_result(
@@ -1143,9 +1326,19 @@ static int smb5_usb_set_prop(struct power_supply *psy,
 		chg->adapter_cc_mode = val->intval;
 		break;
 	case POWER_SUPPLY_PROP_APSD_RERUN:
+/* Begin add by jin.wang for PR-11661383 at 2021-11-3 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+		pr_err("userspace set apsd rerun, skip\n");
+#endif
+/* End add by jin.wang */
 		del_timer_sync(&chg->apsd_timer);
 		chg->apsd_ext_timeout = false;
+/* Begin del by jin.wang for PR-11661383 at 2021-11-3 */
+#if !defined(CONFIG_TCT_PM7250_COMMON) \
+	&& !defined(CONFIG_TCT_IRVINE_CHG_COMMON)
 		smblib_rerun_apsd(chg);
+#endif
+/* End del by jin.wang */
 		break;
 	default:
 		pr_err("set prop %d is not supported\n", psp);
@@ -1229,9 +1422,15 @@ static int smb5_usb_port_get_prop(struct power_supply *psy,
 		if (!val->intval)
 			break;
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+		if (chg->real_charger_type == POWER_SUPPLY_TYPE_USB)
+#else
 		if (((chg->typec_mode == POWER_SUPPLY_TYPEC_SOURCE_DEFAULT) ||
 		   (chg->connector_type == POWER_SUPPLY_CONNECTOR_MICRO_USB))
 			&& (chg->real_charger_type == POWER_SUPPLY_TYPE_USB))
+#endif
 			val->intval = 1;
 		else
 			val->intval = 0;
@@ -1396,10 +1595,23 @@ static int smb5_usb_main_get_prop(struct power_supply *psy,
 		rc = -EINVAL;
 		break;
 	}
+
+/* MODIFIED-BEGIN by jin.wang, 2020-04-07,BUG-9172506*/
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	if (rc < 0) {
+		pr_debug("Couldn't get prop %d rc = %d\n", psp, rc);
+		return -ENODATA;
+	}
+	return 0;
+#else
 	if (rc < 0)
 		pr_debug("Couldn't get prop %d rc = %d\n", psp, rc);
 
 	return rc;
+#endif
+/* MODIFIED-END by jin.wang,BUG-9172506*/
 }
 
 static int smb5_usb_main_set_prop(struct power_supply *psy,
@@ -1412,6 +1624,10 @@ static int smb5_usb_main_set_prop(struct power_supply *psy,
 	enum power_supply_type real_chg_type = chg->real_charger_type;
 	int rc = 0, offset_ua = 0;
 
+#if defined(CONFIG_TCT_OTTAWA_CHG_PATCH)
+	int proper_fcc;
+#endif
+
 	switch (psp) {
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
 		rc = smblib_set_charge_param(chg, &chg->param.fv, val->intval);
@@ -1422,8 +1638,23 @@ static int smb5_usb_main_set_prop(struct power_supply *psy,
 		if (rc < 0)
 			offset_ua = 0;
 
+#if defined(CONFIG_TCT_OTTAWA_CHG_PATCH)
+		if ((val->intval + offset_ua) > chg->batt_profile_fcc_ua) {
+			proper_fcc = chg->batt_profile_fcc_ua;
+		} else if ((rc == -ENXIO)
+			&& (is_override_vote_enabled_locked(chg->fcc_main_votable))) {
+			proper_fcc = get_effective_result_locked(chg->fcc_votable);
+		} else {
+			proper_fcc = val->intval + offset_ua;
+		}
+		pr_err("set final main_fcc = %d, %d + %d\n", proper_fcc,
+				val->intval, offset_ua);
+		rc = smblib_set_charge_param(chg, &chg->param.fcc,
+						proper_fcc);
+#else
 		rc = smblib_set_charge_param(chg, &chg->param.fcc,
 						val->intval + offset_ua);
+#endif
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
 		rc = smblib_set_icl_current(chg, val->intval);
@@ -1467,8 +1698,17 @@ static int smb5_usb_main_set_prop(struct power_supply *psy,
 		rerun_election(chg->fcc_votable);
 		break;
 	case POWER_SUPPLY_PROP_FORCE_MAIN_FCC:
+#if defined(CONFIG_TCT_PM7250_COMMON) && !defined(CONFIG_TCT_OTTAWA_CHG_PATCH)
+		return -EINVAL;
+#endif
+
+#if defined(CONFIG_TCT_OTTAWA_CHG_PATCH)
+		pr_err("FORCE_MAIN_FCC: %d\n", val->intval);
+#endif
+
 		vote_override(chg->fcc_main_votable, CC_MODE_VOTER,
 				(val->intval < 0) ? false : true, val->intval);
+
 		if (val->intval >= 0)
 			chg->chg_param.forced_main_fcc = val->intval;
 		/*
@@ -1482,8 +1722,17 @@ static int smb5_usb_main_set_prop(struct power_supply *psy,
 		rerun_election(chg->fcc_votable);
 		break;
 	case POWER_SUPPLY_PROP_FORCE_MAIN_ICL:
+#if defined(CONFIG_TCT_PM7250_COMMON) && !defined(CONFIG_TCT_OTTAWA_CHG_PATCH)
+		return -EINVAL;
+#endif
+
+#if defined(CONFIG_TCT_OTTAWA_CHG_PATCH)
+		pr_err("FORCE_MAIN_ICL: %d\n", val->intval);
+#endif
+
 		vote_override(chg->usb_icl_votable, CC_MODE_VOTER,
 				(val->intval < 0) ? false : true, val->intval);
+
 		/* Main ICL updated re-calculate ILIM */
 		if (real_chg_type == POWER_SUPPLY_TYPE_USB_HVDCP_3 ||
 			real_chg_type == POWER_SUPPLY_TYPE_USB_HVDCP_3P5)
@@ -1569,6 +1818,19 @@ static enum power_supply_property smb5_dc_props[] = {
 	POWER_SUPPLY_PROP_REAL_TYPE,
 	POWER_SUPPLY_PROP_DC_RESET,
 	POWER_SUPPLY_PROP_AICL_DONE,
+#if defined(CONFIG_TCT_OTTAWA_CHG_PATCH) || defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	POWER_SUPPLY_PROP_DC_STATUS,
+	POWER_SUPPLY_PROP_TEMP,
+	POWER_SUPPLY_PROP_FW_CURRENT_VERSION,
+	POWER_SUPPLY_PROP_FW_GOAL_VERSION,
+	POWER_SUPPLY_PROP_MTP_START,
+	POWER_SUPPLY_PROP_MTP_STATUS,
+	POWER_SUPPLY_PROP_POWER_NOW,
+#endif
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	POWER_SUPPLY_PROP_DC_START_TX,
+#endif
 };
 
 static int smb5_dc_get_prop(struct power_supply *psy,
@@ -1610,6 +1872,29 @@ static int smb5_dc_get_prop(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_AICL_DONE:
 		val->intval = chg->dcin_aicl_done;
 		break;
+#if defined(CONFIG_TCT_OTTAWA_CHG_PATCH) || defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	case POWER_SUPPLY_PROP_DC_STATUS:
+		rc = smblib_get_prop_dc_status(chg, val);
+		break;
+	case POWER_SUPPLY_PROP_TEMP:
+		rc = smblib_get_prop_quiet_temp(chg, val);
+		break;
+	case POWER_SUPPLY_PROP_MTP_START:
+		val->intval = 0;
+		break;
+	case POWER_SUPPLY_PROP_MTP_STATUS:
+	case POWER_SUPPLY_PROP_FW_CURRENT_VERSION:
+	case POWER_SUPPLY_PROP_FW_GOAL_VERSION:
+	case POWER_SUPPLY_PROP_POWER_NOW:
+		rc = smblib_get_prop_dc_stub(chg, psp, val);
+		break;
+#endif
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	case POWER_SUPPLY_PROP_DC_START_TX:
+		rc = smblib_get_prop_dc_stub(chg, psp, val);
+		break;
+#endif
 	default:
 		return -EINVAL;
 	}
@@ -1642,6 +1927,17 @@ static int smb5_dc_set_prop(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_DC_RESET:
 		rc = smblib_set_prop_dc_reset(chg);
 		break;
+#if defined(CONFIG_TCT_OTTAWA_CHG_PATCH) || defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	case POWER_SUPPLY_PROP_MTP_START:
+		rc = smblib_set_prop_dc_stub(chg, psp, val);
+		break;
+#endif
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	case POWER_SUPPLY_PROP_DC_START_TX:
+		rc = smblib_set_prop_dc_stub(chg, psp, val);
+		break;
+#endif
 	default:
 		return -EINVAL;
 	}
@@ -1655,6 +1951,14 @@ static int smb5_dc_prop_is_writeable(struct power_supply *psy,
 	switch (psp) {
 	case POWER_SUPPLY_PROP_INPUT_VOLTAGE_REGULATION:
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
+#if defined(CONFIG_TCT_OTTAWA_CHG_PATCH) || defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	case POWER_SUPPLY_PROP_INPUT_SUSPEND:
+	case POWER_SUPPLY_PROP_DC_RESET:
+	case POWER_SUPPLY_PROP_MTP_START:
+#endif
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	case POWER_SUPPLY_PROP_DC_START_TX:
+#endif
 		return 1;
 	default:
 		break;
@@ -1732,6 +2036,18 @@ static enum power_supply_property smb5_batt_props[] = {
 	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
 	POWER_SUPPLY_PROP_TIME_TO_FULL_NOW,
 	POWER_SUPPLY_PROP_FCC_STEPPER_ENABLE,
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	POWER_SUPPLY_PROP_TCL_FIXTEMP,
+	POWER_SUPPLY_PROP_CHARGING_ENABLED,
+	POWER_SUPPLY_PROP_SAFETY_TIMER_ENABLE,
+#endif
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	POWER_SUPPLY_PROP_SUB_BTEMP,
+	POWER_SUPPLY_PROP_SUB_BCURRENT,
+	POWER_SUPPLY_PROP_MAIN_BVOLTAGE,
+#endif
 };
 
 #define DEBUG_ACCESSORY_TEMP_DECIDEGC	250
@@ -1745,24 +2061,48 @@ static int smb5_batt_get_prop(struct power_supply *psy,
 	switch (psp) {
 	case POWER_SUPPLY_PROP_STATUS:
 		rc = smblib_get_prop_batt_status(chg, val);
+#if defined(CONFIG_TCT_CHG_AUTOTEST)
+		if (val->intval == POWER_SUPPLY_STATUS_FULL)
+			pr_err_ratelimited("TCTNB_FULL\n");
+		else
+			pr_err_ratelimited("TCTNB_STATUS:%d\n", val->intval);
+#endif
 		break;
 	case POWER_SUPPLY_PROP_HEALTH:
 		rc = smblib_get_prop_batt_health(chg, val);
+#if defined(CONFIG_TCT_CHG_AUTOTEST)
+		pr_err_ratelimited("TCTNB_HEALTH:%d\n", val->intval);
+#endif
 		break;
 	case POWER_SUPPLY_PROP_PRESENT:
 		rc = smblib_get_prop_batt_present(chg, val);
 		break;
 	case POWER_SUPPLY_PROP_INPUT_SUSPEND:
 		rc = smblib_get_prop_input_suspend(chg, val);
+#if defined(CONFIG_TCT_CHG_AUTOTEST)
+		if (val->intval)
+			pr_err_ratelimited("TCTNB_STOP_CHARGING\n");
+#endif
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_TYPE:
 		rc = smblib_get_prop_batt_charge_type(chg, val);
 		break;
 	case POWER_SUPPLY_PROP_CAPACITY:
 		rc = smblib_get_prop_batt_capacity(chg, val);
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+		chg->real_soc = val->intval;
+#endif
+#if defined(CONFIG_TCT_CHG_AUTOTEST)
+		pr_err_ratelimited("TCTNB_SOC:%d\n", val->intval);
+#endif
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT:
 		rc = smblib_get_prop_system_temp_level(chg, val);
+#if defined(CONFIG_TCT_CHG_AUTOTEST)
+		pr_err_ratelimited("TCTNB_TEMP_LVL:%d\n", val->intval);
+#endif
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT_MAX:
 		rc = smblib_get_prop_system_temp_level_max(chg, val);
@@ -1785,6 +2125,9 @@ static int smb5_batt_get_prop(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
 		rc = smblib_get_prop_from_bms(chg,
 				POWER_SUPPLY_PROP_VOLTAGE_NOW, val);
+#if defined(CONFIG_TCT_CHG_AUTOTEST)
+		pr_err_ratelimited("TCTNB_VOL:%d\n", val->intval);
+#endif
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
 		val->intval = get_client_vote(chg->fv_votable,
@@ -1799,6 +2142,9 @@ static int smb5_batt_get_prop(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
 		rc = smblib_get_batt_current_now(chg, val);
+#if defined(CONFIG_TCT_CHG_AUTOTEST)
+		pr_err_ratelimited("TCTNB_CURRENT:%d\n", val->intval);
+#endif
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_QNOVO:
 		val->intval = get_client_vote_locked(chg->fcc_votable,
@@ -1815,11 +2161,25 @@ static int smb5_batt_get_prop(struct power_supply *psy,
 		rc = smblib_get_prop_batt_iterm(chg, val);
 		break;
 	case POWER_SUPPLY_PROP_TEMP:
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+		rc = smblib_get_prop_from_bms(chg,
+						POWER_SUPPLY_PROP_TEMP, val);
+#else
 		if (chg->typec_mode == POWER_SUPPLY_TYPEC_SINK_DEBUG_ACCESSORY)
 			val->intval = DEBUG_ACCESSORY_TEMP_DECIDEGC;
 		else
 			rc = smblib_get_prop_from_bms(chg,
 						POWER_SUPPLY_PROP_TEMP, val);
+#endif
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+		if(fixtemp == 1)
+			val->intval = fixtemp_val;
+#endif
 		break;
 	case POWER_SUPPLY_PROP_TECHNOLOGY:
 		val->intval = POWER_SUPPLY_TECHNOLOGY_LION;
@@ -1884,9 +2244,64 @@ static int smb5_batt_get_prop(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_FCC_STEPPER_ENABLE:
 		val->intval = chg->fcc_stepper_enable;
 		break;
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	case POWER_SUPPLY_PROP_TCL_FIXTEMP:
+		val->intval = fixtemp;
+		break;
+	case POWER_SUPPLY_PROP_CHARGING_ENABLED:
+		val->intval = !get_client_vote(chg->chg_disable_votable,
+					      USER_VOTER);
+		break;
+	case POWER_SUPPLY_PROP_SAFETY_TIMER_ENABLE:
+		val->intval = safety_timer_en;
+		break;
+#endif
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	case POWER_SUPPLY_PROP_SUB_BTEMP:
+		if (fake_sub_btemp == -EINVAL) {
+			rc = smblib_get_prop_from_bms(chg,
+				POWER_SUPPLY_PROP_SUB_BTEMP, val);
+		} else {
+			val->intval = fake_sub_btemp;
+		}
+#if defined(CONFIG_TCT_CHG_AUTOTEST)
+		pr_err_ratelimited("TCTNB_SUB_BTEMP:%d\n", val->intval);
+#endif
+		break;
+	case POWER_SUPPLY_PROP_SUB_BCURRENT:
+		if (fake_sub_bcurrent == -EINVAL) {
+			rc = smblib_get_prop_sub_battery_current(chg, val);
+		} else {
+			val->intval = fake_sub_bcurrent;
+		}
+#if defined(CONFIG_TCT_CHG_AUTOTEST)
+		pr_err_ratelimited("TCTNB_SUB_BCURRENT:%d\n", val->intval);
+#endif
+		break;
+	case POWER_SUPPLY_PROP_MAIN_BVOLTAGE:
+		if (fake_main_vol == -EINVAL) {
+			rc = smblib_get_prop_main_battery_voltage(chg, val);
+		} else {
+			val->intval = fake_main_vol;
+		}
+#if defined(CONFIG_TCT_CHG_AUTOTEST)
+		pr_err_ratelimited("TCTNB_MAIN_BVOL:%d\n", val->intval);
+#endif
+		break;
+#endif
+
 	default:
 		pr_err("batt power supply prop %d not supported\n", psp);
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+		return -ENODATA;
+#else
 		return -EINVAL;
+#endif
 	}
 
 	if (rc < 0) {
@@ -1908,10 +2323,44 @@ static int smb5_batt_set_prop(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_STATUS:
 		rc = smblib_set_prop_batt_status(chg, val);
 		break;
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	case POWER_SUPPLY_PROP_CHARGING_ENABLED:
+		if (!stopchg_en) {
+			pr_emerg("stop battery chg not allowed\n");
+			return -EINVAL;
+		}
+		vote(chg->chg_disable_votable, USER_VOTER,
+			(val->intval > 0) ? false : true, 0);
+		pr_emerg("WARNING: userspace %s battery chg function!\n",
+				(val->intval > 0) ? "enable" : "disable");
+		break;
+#endif
+
 	case POWER_SUPPLY_PROP_INPUT_SUSPEND:
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+		if (!stopchg_en) {
+			pr_emerg("stop chg not allowed\n");
+			return -EINVAL;
+		}
+#endif
 		rc = smblib_set_prop_input_suspend(chg, val);
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+		pr_emerg("WARNING: userspace %s chg function!\n",
+				(val->intval > 0) ? "suspend" : "unsuspend");
+#endif
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT:
+#if defined(CONFIG_TCT_PM7250_COMMON)
+		if (thermal_disable)
+			break;
+#endif
 		rc = smblib_set_prop_system_temp_level(chg, val);
 		break;
 	case POWER_SUPPLY_PROP_CAPACITY:
@@ -1966,8 +2415,22 @@ static int smb5_batt_set_prop(struct power_supply *psy,
 		rc = smblib_run_aicl(chg, RERUN_AICL);
 		break;
 	case POWER_SUPPLY_PROP_DP_DM:
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+		if (val->intval == POWER_SUPPLY_DP_DM_FORCE_12V) {
+			return -EINVAL;
+		} else if((chg->real_charger_type == POWER_SUPPLY_TYPE_USB_HVDCP)
+			&& (val->intval == POWER_SUPPLY_DP_DM_FORCE_9V)
+			&& (chg->real_soc > 90)) {
+			return -EINVAL;
+		} else if (!chg->flash_active) {
+			rc = smblib_dp_dm(chg, val->intval);
+		}
+#else
 		if (!chg->flash_active)
 			rc = smblib_dp_dm(chg, val->intval);
+#endif
 		break;
 	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMITED:
 		rc = smblib_set_prop_input_current_limited(chg, val);
@@ -1991,6 +2454,28 @@ static int smb5_batt_set_prop(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_FCC_STEPPER_ENABLE:
 		chg->fcc_stepper_enable = val->intval;
 		break;
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	case POWER_SUPPLY_PROP_TCL_FIXTEMP:
+		fixtemp = val->intval;
+		break;
+	case POWER_SUPPLY_PROP_SAFETY_TIMER_ENABLE:
+		safety_timer_en = val->intval;
+		pr_err("set safety timer %d done\n", safety_timer_en);
+		break;
+#endif
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	case POWER_SUPPLY_PROP_SUB_BTEMP:
+		fake_sub_btemp = val->intval;
+		break;
+	case POWER_SUPPLY_PROP_SUB_BCURRENT:
+		fake_sub_bcurrent = val->intval;
+		break;
+	case POWER_SUPPLY_PROP_MAIN_BVOLTAGE:
+		fake_main_vol = val->intval;
+		break;
+#endif
 	default:
 		rc = -EINVAL;
 	}
@@ -2004,7 +2489,11 @@ static int smb5_batt_prop_is_writeable(struct power_supply *psy,
 	switch (psp) {
 	case POWER_SUPPLY_PROP_STATUS:
 	case POWER_SUPPLY_PROP_INPUT_SUSPEND:
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if !defined(CONFIG_TCT_PM7250_COMMON) && !defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
 	case POWER_SUPPLY_PROP_SYSTEM_TEMP_LEVEL:
+#endif
 	case POWER_SUPPLY_PROP_CAPACITY:
 	case POWER_SUPPLY_PROP_PARALLEL_DISABLE:
 	case POWER_SUPPLY_PROP_DP_DM:
@@ -2012,6 +2501,23 @@ static int smb5_batt_prop_is_writeable(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMITED:
 	case POWER_SUPPLY_PROP_STEP_CHARGING_ENABLED:
 	case POWER_SUPPLY_PROP_DIE_HEALTH:
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	case POWER_SUPPLY_PROP_TCL_FIXTEMP:
+	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
+	case POWER_SUPPLY_PROP_FCC_STEPPER_ENABLE:
+	case POWER_SUPPLY_PROP_FORCE_RECHARGE:
+	case POWER_SUPPLY_PROP_SET_SHIP_MODE:
+	case POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT:
+	case POWER_SUPPLY_PROP_CHARGING_ENABLED:
+	case POWER_SUPPLY_PROP_SAFETY_TIMER_ENABLE:
+#endif
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	case POWER_SUPPLY_PROP_SUB_BTEMP:
+	case POWER_SUPPLY_PROP_SUB_BCURRENT:
+	case POWER_SUPPLY_PROP_MAIN_BVOLTAGE:
+#endif
 		return 1;
 	default:
 		break;
@@ -2152,11 +2658,18 @@ static int smb5_configure_typec(struct smb_charger *chg)
 	}
 
 	/*
-	 * Across reboot, standard typeC cables get detected as legacy
-	 * cables due to VBUS attachment prior to CC attach/detach. Reset
-	 * the legacy detection logic by enabling/disabling the typeC mode.
+	 * Across reboot, standard typeC cables get detected as legacy cables
+	 * due to VBUS attachment prior to CC attach/dettach. To handle this,
+	 * "early_usb_attach" flag is used, which assumes that across reboot,
+	 * the cable connected can be standard typeC. However, its jurisdiction
+	 * is limited to PD capable designs only. Hence, for non-PD type designs
+	 * reset legacy cable detection by disabling/enabling typeC mode.
 	 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	if (chg->pd_not_supported && (val & TYPEC_LEGACY_CABLE_STATUS_BIT)) {
+#else
 	if (val & TYPEC_LEGACY_CABLE_STATUS_BIT) {
+#endif
 		pval.intval = POWER_SUPPLY_TYPEC_PR_NONE;
 		rc = smblib_set_prop_typec_power_role(chg, &pval);
 		if (rc < 0) {
@@ -2177,6 +2690,14 @@ static int smb5_configure_typec(struct smb_charger *chg)
 
 	smblib_apsd_enable(chg, true);
 
+#if defined(CONFIG_TCT_PM7250_COMMON)
+	rc = smblib_masked_write(chg, TYPE_C_CFG_REG,
+				BC1P2_START_ON_CC_BIT, 0);
+	if (rc < 0) {
+		dev_err(chg->dev, "failed to write TYPE_C_CFG_REG rc=%d\n", rc);
+		return rc;
+	}
+#else
 	rc = smblib_read(chg, TYPE_C_SNK_STATUS_REG, &val);
 	if (rc < 0) {
 		dev_err(chg->dev, "failed to read TYPE_C_SNK_STATUS_REG rc=%d\n",
@@ -2184,8 +2705,15 @@ static int smb5_configure_typec(struct smb_charger *chg)
 
 		return rc;
 	}
+/* Begin modified by hailong.chen for defect 9905851 on 2020-09-16 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	if (1) //support DAM cable such as huawei
+#else
+	if (!(val & SNK_DAM_MASK))
+#endif
+ {
+/* End modified by hailong.chen for defect 9905851 on 2020-09-16 */
 
-	if (!(val & SNK_DAM_MASK)) {
 		rc = smblib_masked_write(chg, TYPE_C_CFG_REG,
 					BC1P2_START_ON_CC_BIT, 0);
 		if (rc < 0) {
@@ -2195,6 +2723,7 @@ static int smb5_configure_typec(struct smb_charger *chg)
 			return rc;
 		}
 	}
+#endif
 
 	/* Use simple write to clear interrupts */
 	rc = smblib_write(chg, TYPE_C_INTERRUPT_EN_CFG_1_REG, 0);
@@ -2492,6 +3021,15 @@ static int smb5_init_dc_peripheral(struct smb_charger *chg)
 		return rc;
 	}
 
+#if defined(CONFIG_TCT_PM7250_COMMON)
+	rc = smblib_write(chg, DCIN_5V_AICL_THRESH_REG, 0);
+	if (rc < 0) {
+		dev_err(chg->dev,
+			"Couldn't reset dcin 5v thresh rc=%d\n", rc);
+		return rc;
+	}
+#endif
+
 	return rc;
 }
 
@@ -2590,9 +3128,17 @@ static int smb5_configure_float_charger(struct smb5 *chip)
 	}
 
 	chg->float_cfg = val;
+/* Begin modified by hailong.chen for defect 9908148 on 2020-10-28 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	/* Update float charger setting and set DCD timeout 600ms */
+	rc = smblib_masked_write(chg, USBIN_OPTIONS_2_CFG_REG,
+				FLOAT_OPTIONS_MASK | DCD_TIMEOUT_SEL_BIT, val | DCD_TIMEOUT_SEL_BIT);
+#else
 	/* Update float charger setting and set DCD timeout 300ms */
 	rc = smblib_masked_write(chg, USBIN_OPTIONS_2_CFG_REG,
 				FLOAT_OPTIONS_MASK | DCD_TIMEOUT_SEL_BIT, val);
+#endif
+/* End modified by hailong.chen for defect 9908148 on 2020-10-28 */
 	if (rc < 0) {
 		dev_err(chg->dev, "Couldn't change float charger setting rc=%d\n",
 			rc);
@@ -2665,6 +3211,46 @@ static int smb5_init_connector_type(struct smb_charger *chg)
 
 }
 
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+static u16 jeita_config[2][2] = {
+	{0x62f1, 0x4111},
+	{0x6865, 0x35a5},
+};
+static int smb5_update_jeita(struct smb_charger *chg, int idx)
+{
+	int rc;
+	u16 temp, base;
+
+	if ((idx != 0) && (idx != 1))
+		return -EINVAL;
+
+	base = CHGR_JEITA_THRESHOLD_BASE_REG(idx);
+
+	temp = jeita_config[idx][1] & 0xFFFF;
+	temp = ((temp & 0xFF00) >> 8) | ((temp & 0xFF) << 8);
+	rc = smblib_batch_write(chg, base, (u8 *)&temp, 2);
+	if (rc < 0) {
+		dev_err(chg->dev,
+				"Couldn't configure Jeita hard hot threshold rc=%d\n",
+				rc);
+		return rc;
+	}
+
+	temp = jeita_config[idx][0] & 0xFFFF;
+	temp = ((temp & 0xFF00) >> 8) | ((temp & 0xFF) << 8);
+	rc = smblib_batch_write(chg, base + 2, (u8 *)&temp, 2);
+	if (rc < 0) {
+		dev_err(chg->dev,
+				"Couldn't configure Jeita hard cold threshold rc=%d\n",
+				rc);
+		return rc;
+	}
+	pr_err("Jeita [%d] configured %x,%x\n", idx,
+			jeita_config[idx][0], jeita_config[idx][1]);
+	return 0;
+}
+#endif
+
 static int smb5_init_hw(struct smb5 *chip)
 {
 	struct smb_charger *chg = &chip->chg;
@@ -2673,6 +3259,23 @@ static int smb5_init_hw(struct smb5 *chip)
 
 	if (chip->dt.no_battery)
 		chg->fake_capacity = 50;
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	rc = smb5_configure_internal_pull(chg, BAT_THERM,
+				get_valid_pullup(PULL_30K));
+	if (rc < 0) {
+		dev_err(chg->dev,
+			"Couldn't configure BAT pull-up rc=%d\n",
+			rc);
+	}
+	rc = smb5_update_jeita(chg, 0);
+	rc |= smb5_update_jeita(chg, 1);
+	if (rc) {
+		dev_err(chg->dev,
+			"Couldn't update BAT pull-up rc=%d\n", rc);
+		return rc;
+	}
+#endif
 
 	if (chg->sdam_base) {
 		rc = smblib_write(chg,
@@ -2690,9 +3293,17 @@ static int smb5_init_hw(struct smb5 *chip)
 		smblib_get_charge_param(chg, &chg->param.fcc,
 				&chg->batt_profile_fcc_ua);
 
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	if (chip->dt.batt_profile_fv_uv <= 0) {
+		chg->batt_profile_fv_uv = 4400000;
+	} else {
+		chg->batt_profile_fv_uv = chip->dt.batt_profile_fv_uv;
+	}
+#else
 	if (chip->dt.batt_profile_fv_uv < 0)
 		smblib_get_charge_param(chg, &chg->param.fv,
 				&chg->batt_profile_fv_uv);
+#endif
 
 	smblib_get_charge_param(chg, &chg->param.usb_icl,
 				&chg->default_icl_ua);
@@ -2741,9 +3352,11 @@ static int smb5_init_hw(struct smb5 *chip)
 	/* Set HVDCP autonomous mode per DT option */
 	smblib_hvdcp_hw_inov_enable(chg, chip->dt.hvdcp_autonomous);
 
+#if !defined(CONFIG_TCT_PM7250_COMMON)
 	/* Enable HVDCP authentication algorithm for non-PD designs */
 	if (chg->pd_not_supported)
 		smblib_hvdcp_detect_enable(chg, true);
+#endif
 
 	/* Disable HVDCP and authentication algorithm if specified in DT */
 	if (chg->hvdcp_disable)
@@ -2786,6 +3399,13 @@ static int smb5_init_hw(struct smb5 *chip)
 		BATT_PROFILE_VOTER, chg->batt_profile_fv_uv > 0,
 		chg->batt_profile_fv_uv);
 
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	vote(chg->fv2_votable, HW_LIMIT_VOTER,
+		chip->dt.batt_profile_fv_uv > 0, chip->dt.batt_profile_fv_uv);
+	vote(chg->fv2_votable, BATT_PROFILE_VOTER,
+		chg->batt_profile_fv_uv > 0, chg->batt_profile_fv_uv);
+#endif
+
 	/* Some h/w limit maximum supported ICL */
 	vote(chg->usb_icl_votable, HW_LIMIT_VOTER,
 			chg->hw_max_icl_ua > 0, chg->hw_max_icl_ua);
@@ -2815,7 +3435,13 @@ static int smb5_init_hw(struct smb5 *chip)
 	}
 
 	rc = smblib_write(chg, AICL_RERUN_TIME_CFG_REG,
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+				AICL_RERUN_TIME_3MIN_VAL);
+#else
 				AICL_RERUN_TIME_12S_VAL);
+#endif
 	if (rc < 0) {
 		dev_err(chg->dev,
 			"Couldn't configure AICL rerun interval rc=%d\n", rc);
@@ -2911,7 +3537,17 @@ static int smb5_init_hw(struct smb5 *chip)
 	}
 
 	rc = smblib_write(chg, CHGR_FAST_CHARGE_SAFETY_TIMER_CFG_REG,
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_IEEE1725)
+					FAST_CHARGE_SAFETY_TIMER_192_MIN);
+#else
+					FAST_CHARGE_SAFETY_TIMER_1536_MIN);
+#endif
+#else
 					FAST_CHARGE_SAFETY_TIMER_768_MIN);
+#endif
 	if (rc < 0) {
 		dev_err(chg->dev, "Couldn't set CHGR_FAST_CHARGE_SAFETY_TIMER_CFG_REG rc=%d\n",
 			rc);
@@ -2946,6 +3582,18 @@ static int smb5_init_hw(struct smb5 *chip)
 			return rc;
 		}
 	}
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	chg->qc2_unsupported_voltage = QC2_NON_COMPLIANT_12V;
+	rc = smblib_masked_write(chg, HVDCP_PULSE_COUNT_MAX_REG,
+				HVDCP_PULSE_COUNT_MAX_QC2_MASK,
+				HVDCP_PULSE_COUNT_MAX_QC2_9V);
+	if (rc < 0)
+		dev_err(chg->dev, "Couldn't write max pulses rc=%d\n",
+				rc);
+#endif
 
 	if (chg->smb_pull_up != -EINVAL) {
 		rc = smb5_configure_internal_pull(chg, SMB_THERM,
@@ -3078,7 +3726,11 @@ static struct smb_irq_info smb5_irqs[] = {
 	},
 	[INPUT_CURRENT_LIMITING_IRQ] = {
 		.name		= "input-current-limiting",
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if !defined(CONFIG_TCT_PM7250_COMMON) && !defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
 		.handler	= default_irq_handler,
+#endif
 	},
 	[CONCURRENT_MODE_DISABLE_IRQ] = {
 		.name		= "concurrent-mode-disable",
@@ -3161,8 +3813,10 @@ static struct smb_irq_info smb5_irqs[] = {
 	},
 	[DCIN_UV_IRQ] = {
 		.name		= "dcin-uv",
+#if !defined(CONFIG_TCT_OTTAWA_CHG_PATCH) && !defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
 		.handler	= dcin_uv_irq_handler,
 		.wake		= true,
+#endif
 	},
 	[DCIN_OV_IRQ] = {
 		.name		= "dcin-ov",
@@ -3331,7 +3985,11 @@ static int smb5_request_interrupt(struct smb5 *chip,
 	irq_data->storm_data = smb5_irqs[irq_index].storm_data;
 	mutex_init(&irq_data->storm_data.storm_lock);
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if !defined(CONFIG_TCT_PM7250_COMMON) && !defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
 	smb5_irqs[irq_index].enabled = true;
+#endif
 	rc = devm_request_threaded_irq(chg->dev, irq, NULL,
 					smb5_irqs[irq_index].handler,
 					IRQF_ONESHOT, irq_name, irq_data);
@@ -3340,6 +3998,11 @@ static int smb5_request_interrupt(struct smb5 *chip,
 		return rc;
 	}
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	smb5_irqs[irq_index].enabled = true;
+#endif
 	smb5_irqs[irq_index].irq = irq;
 	smb5_irqs[irq_index].irq_data = irq_data;
 	if (smb5_irqs[irq_index].wake)
@@ -3477,6 +4140,9 @@ static int smb5_show_charger_status(struct smb5 *chip)
 	union power_supply_propval val;
 	int usb_present, batt_present, batt_health, batt_charge_type;
 	int rc;
+#if defined(CONFIG_TCT_OTTAWA_CHG_PATCH) || defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	int dcin_present;
+#endif
 
 	rc = smblib_get_prop_usb_present(chg, &val);
 	if (rc < 0) {
@@ -3484,6 +4150,16 @@ static int smb5_show_charger_status(struct smb5 *chip)
 		return rc;
 	}
 	usb_present = val.intval;
+
+#if defined(CONFIG_TCT_OTTAWA_CHG_PATCH) || defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	rc = smblib_get_prop_dc_present(chg, &val);
+	if (rc < 0) {
+		pr_err("Couldn't get dcin present rc=%d\n", rc);
+		dcin_present = 0;
+	} else {
+		dcin_present = val.intval;
+	}
+#endif
 
 	rc = smblib_get_prop_batt_present(chg, &val);
 	if (rc < 0) {
@@ -3506,9 +4182,15 @@ static int smb5_show_charger_status(struct smb5 *chip)
 	}
 	batt_charge_type = val.intval;
 
+#if defined(CONFIG_TCT_OTTAWA_CHG_PATCH) || defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	pr_info("usbin=%d dcin=%d t=%d bp=%d bh=%d ct=%d\n",
+		usb_present, dcin_present, chg->real_charger_type,
+		batt_present, batt_health, batt_charge_type);
+#else
 	pr_info("SMB5 status - usb:present=%d type=%d batt:present = %d health = %d charge = %d\n",
 		usb_present, chg->real_charger_type,
 		batt_present, batt_health, batt_charge_type);
+#endif
 	return rc;
 }
 
@@ -3665,7 +4347,11 @@ static int smb5_probe(struct platform_device *pdev)
 	switch (chg->chg_param.smb_version) {
 	case PM8150B_SUBTYPE:
 	case PM6150_SUBTYPE:
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
 	case PM7250B_SUBTYPE:
+#endif
 		rc = smb5_init_dc_psy(chip);
 		if (rc < 0) {
 			pr_err("Couldn't initialize dc psy rc=%d\n", rc);
@@ -3706,12 +4392,14 @@ static int smb5_probe(struct platform_device *pdev)
 		goto cleanup;
 	}
 
+#if !defined(CONFIG_TCT_PM7250_COMMON) 
 	rc = smb5_determine_initial_status(chip);
 	if (rc < 0) {
 		pr_err("Couldn't determine initial status rc=%d\n",
 			rc);
 		goto cleanup;
 	}
+#endif
 
 	rc = smb5_request_interrupts(chip);
 	if (rc < 0) {
@@ -3741,8 +4429,24 @@ static int smb5_probe(struct platform_device *pdev)
 
 	device_init_wakeup(chg->dev, true);
 
+#if defined(CONFIG_TCT_PM7250_COMMON) 
+	rc = smb5_determine_initial_status(chip);
+	if (rc < 0) {
+		pr_err("Couldn't determine initial status rc=%d\n",
+			rc);
+		goto free_irq;
+	}
+#endif
+
+#if defined(CONFIG_TCT_PM7250_COMMON) 
+	recheck_unknown_typec(chg);
+#endif
+
 	pr_info("QPNP SMB5 probed successfully\n");
 
+#if defined(CONFIG_TCT_CHG_AUTOTEST)
+	pr_err("TCTNB_KERNEL_START\n");
+#endif
 	return rc;
 
 free_irq:
@@ -3775,6 +4479,10 @@ static void smb5_shutdown(struct platform_device *pdev)
 {
 	struct smb5 *chip = platform_get_drvdata(pdev);
 	struct smb_charger *chg = &chip->chg;
+
+#if defined(CONFIG_TCT_CHG_AUTOTEST)
+	pr_emerg("TCTNB_SHUTDOWN\n");
+#endif
 
 	/* disable all interrupts */
 	smb5_disable_interrupts(chg);

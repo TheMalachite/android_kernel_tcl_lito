@@ -105,6 +105,14 @@ obj-$(CONFIG_ATA_OVER_ETH)	+= block/aoe/
 obj-$(CONFIG_PARIDE) 		+= block/paride/
 obj-$(CONFIG_TC)		+= tc/
 obj-$(CONFIG_UWB)		+= uwb/
+
+# Begin modified by hailong.chen for task 9551005 on 2020-08-05
+ifdef CONFIG_TCT_INIT_SPEED_UP
+obj-$(CONFIG_OF)		+= of/
+obj-$(CONFIG_IIO)		+= iio/
+endif
+# End modified by hailong.chen for task 9551005 on 2020-08-05
+
 obj-$(CONFIG_USB_PHY)		+= usb/
 obj-$(CONFIG_USB)		+= usb/
 obj-$(CONFIG_USB_SUPPORT)	+= usb/
@@ -145,7 +153,13 @@ endif
 obj-$(CONFIG_DCA)		+= dca/
 obj-$(CONFIG_HID)		+= hid/
 obj-$(CONFIG_PPC_PS3)		+= ps3/
+
+# Begin modified by hailong.chen for task 9551005 on 2020-08-05
+ifndef CONFIG_TCT_INIT_SPEED_UP
 obj-$(CONFIG_OF)		+= of/
+endif
+# End modified by hailong.chen for task 9551005 on 2020-08-05
+
 obj-$(CONFIG_SSB)		+= ssb/
 obj-$(CONFIG_BCMA)		+= bcma/
 obj-$(CONFIG_VHOST_RING)	+= vhost/
@@ -168,7 +182,13 @@ obj-$(CONFIG_HYPERV)		+= hv/
 
 obj-$(CONFIG_PM_DEVFREQ)	+= devfreq/
 obj-$(CONFIG_MEMORY)		+= memory/
+
+# Begin modified by hailong.chen for task 9551005 on 2020-08-05
+ifndef CONFIG_TCT_INIT_SPEED_UP
 obj-$(CONFIG_IIO)		+= iio/
+endif
+# End modified by hailong.chen for task 9551005 on 2020-08-05
+
 obj-$(CONFIG_VME_BUS)		+= vme/
 obj-$(CONFIG_IPACK_BUS)		+= ipack/
 obj-$(CONFIG_NTB)		+= ntb/
@@ -192,3 +212,7 @@ obj-$(CONFIG_UNISYS_VISORBUS)	+= visorbus/
 obj-$(CONFIG_SIOX)		+= siox/
 obj-$(CONFIG_GNSS)		+= gnss/
 obj-$(CONFIG_SENSORS_SSC)	+= sensors/
+# Begin added by hailong.chen for task 8189037 on 2019-07-31
+obj-y += tct/
+# End added by hailong.chen for task 8189037 on 2019-07-31
+obj-y += cpuload/

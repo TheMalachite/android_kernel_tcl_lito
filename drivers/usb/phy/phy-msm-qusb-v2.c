@@ -3,6 +3,11 @@
  * Copyright (c) 2014-2021, The Linux Foundation. All rights reserved.
  */
 
+/* Begin added by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON) || defined(CONFIG_TCT_PM7250_COMMON)
+#define pr_fmt(fmt) "[USB2_PHY]: %s: " fmt, __func__
+#endif
+/* End added by hailong.chen for task 9551005 on 2020-08-05 */
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/err.h>

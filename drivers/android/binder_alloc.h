@@ -183,5 +183,11 @@ void binder_alloc_copy_from_buffer(struct binder_alloc *alloc,
 				   binder_size_t buffer_offset,
 				   size_t bytes);
 
+//[TCT-ROM][PERF]Begin Added by jingyuan.wei for freezer on 2019/08/02
+struct page *binder_alloc_get_page_freeze(struct binder_alloc *alloc,
+				       struct binder_buffer *buffer,
+				       binder_size_t buffer_offset,
+				       pgoff_t *pgoffp);
+//[TCT-ROM][PERF]End Added by jingyuan.wei for freezer on 2019/08/02
 #endif /* _LINUX_BINDER_ALLOC_H */
 

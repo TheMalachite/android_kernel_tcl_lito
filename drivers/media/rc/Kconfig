@@ -506,4 +506,9 @@ config IR_ZX
 
 endif #RC_DEVICES
 
+config SPI_KOOKONG
+	tristate "GPIO PWM IR for Kookong"	
+	help
+		Select this option to enable PWM driver for the  IR
+
 endif #RC_CORE

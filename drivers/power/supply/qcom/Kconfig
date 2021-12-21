@@ -132,6 +132,74 @@ config HL6111R
 	  sizes. The HL6111R has voltage, current and temperature
 	  protection mechanisms, an I2C interface, and a PSNS output.
 
+# [start] dis-/enable autotest log of chg
+config TCT_CHG_AUTOTEST
+	bool "Enable Autotest log for chg"
+	default n
+	help
+	  Say Y here to enable the chg log soc/voltage/current for autotest.
+	  Say N to disable these logs for performance.
+# [ended]
+
+# [start] dis-/enable chg common patches based on pm7250b chipset.
+config TCT_PM7250_COMMON
+	bool "Enable common chg patches for pm7250&pm7250B platform"
+	default n
+	select TCT_INIT_SPEED_UP
+	help
+	  Say Y here to enable common chg patches.
+	  Say N to disable these chg patches.
+# [ended]
+
+# Begin modified by hailong.chen for task 9551005 on 2020-08-05
+config TCT_INIT_SPEED_UP
+	bool "tct speed up init"
+	default n
+	help
+	  Say Y here to enable tct speed up init.
+
+config TCT_IRVINE_CHG_COMMON
+	bool "Enable common chg patches for PM6350&PM7250B&SMB1395 platform"
+	default n
+	select TCT_INIT_SPEED_UP
+	help
+	  Say Y here to enable common chg patches.
+	  Say N to disable these chg patches.
+# End modified by hailong.chen for task 9551005 on 2020-08-05
+
+# [start] dis-/enable chg special patches based on PM6350&pm7250B&P9415 chipsets.
+config TCT_OTTAWA_CHG_PATCH
+	bool "Enable only rx patches for wls chg and more"
+	depends on I2C && OF && TCT_PM7250_COMMON
+	select REGMAP_I2C
+	default n
+	help
+	  P9415R is a wireless charging power receiver IC that supports the
+	  A4WP wireless charging power delivery standard. It supports up to
+	  18W, and the output voltage can be programmed with fixed step
+	  sizes. The P9415R has voltage, current and temperature
+	  protection mechanisms and an I2C interface with different gpios.
+	  Say Y here to enable wls and other chg patches on ottawa project.
+	  Say N to disable wls chg patches.
+# [ended]
+
+# [start] dis-/enable chg special patches based on chicago chipsets.
+config TCT_CHICAGO_CHG_PATCH
+	bool "Enable special trx patches for wls chg and more"
+	depends on I2C && OF && TCT_PM7250_COMMON
+	select REGMAP_I2C
+	select INA2XX_ADC
+	default n
+	help
+	  P9415R is a wireless charging power receiver IC that supports the
+	  A4WP wireless charging power delivery standard. It supports up to
+	  18W, and the output voltage can be programmed with fixed step
+	  sizes. The P9415R has voltage, current and temperature
+	  protection mechanisms and an I2C interface with different gpios.
+	  Say Y here to enable wls and other chg patches on ottawa project.
+	  Say N to disable wls chg patches.
+# [ended]
+
 config SMB1398_CHARGER
 	tristate "SMB1398 power supply framework based driver"
 	depends on MFD_I2C_PMIC

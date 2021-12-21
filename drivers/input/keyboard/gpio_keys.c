@@ -31,6 +31,7 @@
 #include <linux/of_irq.h>
 #include <linux/spinlock.h>
 #include <dt-bindings/input/gpio-keys.h>
+#include <linux/pm_wakeup.h> 
 
 struct gpio_button_data {
 	const struct gpio_keys_button *button;
@@ -61,6 +62,22 @@ struct gpio_keys_drvdata {
 	struct gpio_button_data data[0];
 };
 
+struct wakeup_source * gpio_key_wake_src = NULL;
+#define WAKEBYTE_TIMEOUT_MSEC	(800)
+
+#ifdef CONFIG_TCT_CLAMSHELL
+#include <linux/regulator/consumer.h>
+static void clamshell_init(struct device *dev);
+
+struct clamshell_data {
+	struct gpio_desc *gpiod;
+	bool active_low;
+	struct regulator *vdd;
+};
+#endif
+#ifdef CONFIG_TCT_LITO_CHICAGO
+int clamshell_state = 0;
+#endif
 /*
  * SYSFS interface for enabling/disabling keys and switches:
  *
@@ -347,11 +364,40 @@ static DEVICE_ATTR(disabled_switches, S_IWUSR | S_IRUGO,
 		   gpio_keys_show_disabled_switches,
 		   gpio_keys_store_disabled_switches);
 
+#ifdef CONFIG_TCT_CLAMSHELL
+static ssize_t gpio_keys_show_clamshell_status(struct device *dev,
+                struct device_attribute *attr,
+                char *buf)
+{
+    struct platform_device *pdev = to_platform_device(dev);
+    struct gpio_keys_drvdata *ddata = platform_get_drvdata(pdev);
+    int state,gpio_status = 0;
+    int i;
+
+    for (i = 0; i < ddata->pdata->nbuttons; i++) {
+        struct gpio_button_data *bdata = &ddata->data[i];
+
+        if (bdata->button->code == 252)
+        {
+			gpio_status = gpiod_get_value_cansleep(bdata->gpiod);
+            state = (gpio_status ? 1 : 0) ^ bdata->button->active_low;
+            dev_info(dev, "read clamshell_status gpio_status = %d  state = %d \n",gpio_status, state);
+            return sprintf(buf, "%s\n", state ? "Close" : "Open");
+        }
+    }
+    return 0;
+}
+static DEVICE_ATTR(clamshell_status, S_IRUGO, gpio_keys_show_clamshell_status, NULL);
+#endif
+
 static struct attribute *gpio_keys_attrs[] = {
 	&dev_attr_keys.attr,
 	&dev_attr_switches.attr,
 	&dev_attr_disabled_keys.attr,
 	&dev_attr_disabled_switches.attr,
+#ifdef CONFIG_TCT_CLAMSHELL
+    &dev_attr_clamshell_status.attr,
+#endif
 	NULL,
 };
 
@@ -377,7 +423,33 @@ static void gpio_keys_gpio_report_event(struct gpio_button_data *bdata)
 		if (state)
 			input_event(input, type, button->code, button->value);
 	} else {
+#ifdef CONFIG_TCT_LITO_CHICAGO
+		if(*bdata->code == 252 && type == EV_KEY)
+		{
+			dev_info(input->dev.parent, "chicago : clamshell state = (%d : %d) \n",clamshell_state,state);
+			if(clamshell_state == state)
+				return;
+
+			clamshell_state = state;
+			if(state) {
+				input_event(input, EV_KEY, 240, 1);
+				input_sync(input);
+				input_event(input, EV_KEY, 240, 0);
+				input_sync(input);
+			}else {
+				input_event(input, EV_KEY, 241, 1);
+				input_sync(input);
+				input_event(input, EV_KEY, 241, 0);
+				input_sync(input);
+			}
+			dev_info(input->dev.parent, "chicago : report clamshell \n");
+			return;
+		}else {
+			input_event(input, type, *bdata->code, state);
+		}
+#else
 		input_event(input, type, *bdata->code, state);
+#endif
 	}
 	input_sync(input);
 }
@@ -403,6 +475,8 @@ static irqreturn_t gpio_keys_gpio_isr(int irq, void *dev_id)
 		const struct gpio_keys_button *button = bdata->button;
 
 		pm_stay_awake(bdata->input->dev.parent);
+		if(gpio_key_wake_src)
+			__pm_wakeup_event(gpio_key_wake_src, WAKEBYTE_TIMEOUT_MSEC);
 		if (bdata->suspended  &&
 		    (button->type == 0 || button->type == EV_KEY)) {
 			/*
@@ -618,6 +692,12 @@ static int gpio_keys_setup_key(struct platform_device *pdev,
 	bdata->code = &ddata->keymap[idx];
 	*bdata->code = button->code;
 	input_set_capability(input, button->type ?: EV_KEY, *bdata->code);
+#ifdef CONFIG_TCT_LITO_CHICAGO
+	if(*bdata->code == 252 && button->type == EV_KEY){
+		input_set_capability(input, EV_KEY, 240);
+		input_set_capability(input, EV_KEY, 241);
+	}
+#endif
 
 	/*
 	 * Install custom action to cancel release timer and
@@ -871,9 +951,72 @@ static int gpio_keys_probe(struct platform_device *pdev)
 	}
 
 	device_init_wakeup(dev, wakeup);
-
+	gpio_key_wake_src = wakeup_source_register(dev,"gpio_key");
+	if(!gpio_key_wake_src)
+		dev_err(dev, "Unable to register wakeup source \n");
+#ifdef CONFIG_TCT_CLAMSHELL
+    clamshell_init(dev);
+#endif
 	return 0;
 }
+
+#ifdef CONFIG_TCT_CLAMSHELL
+static ssize_t class_clamshell_status_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct clamshell_data *pdev = dev_get_drvdata(dev);
+	int state;
+
+	state = (gpiod_get_value_cansleep(pdev->gpiod) ? 1 : 0) ^ pdev->active_low;
+
+	return sprintf(buf, "%s\n", state ? "Close" : "Open");
+
+}
+static DEVICE_ATTR(hall_status, 0444, class_clamshell_status_show, NULL);
+
+static void clamshell_init(struct device *dev)
+{
+	struct platform_device *pdev = to_platform_device(dev);
+    struct gpio_keys_drvdata *ddata = platform_get_drvdata(pdev);
+	struct class *hall_class;
+	static struct device * hall_device;
+	struct clamshell_data * dclamshell;
+	int i,rc;
+
+	hall_class = class_create(THIS_MODULE, "hall_switch");
+
+	hall_device = device_create(hall_class, NULL, 0, NULL, "hall_switch");
+	dclamshell = devm_kzalloc(hall_device, sizeof(struct clamshell_data), GFP_KERNEL);
+	if (!ddata) {
+		dev_err(hall_device, "failed to allocate state\n");
+		return;
+	}
+	for (i = 0; i < ddata->pdata->nbuttons; i++) {
+		struct gpio_button_data *bdata = &ddata->data[i];
+
+		if (bdata->button->code == 252)
+		{
+			dclamshell->gpiod =  bdata->gpiod;
+			dclamshell->active_low =  bdata->button->active_low;
+		}
+	}
+    hall_device->driver_data = dclamshell;
+#ifdef CONFIG_TCT_LITO_CHICAGO
+	clamshell_state = gpiod_get_value_cansleep(dclamshell->gpiod);
+#endif
+	device_create_file(hall_device, &dev_attr_hall_status);
+
+    dclamshell->vdd = regulator_get(dev, "clamshell-vdd");
+    if (IS_ERR_OR_NULL(dclamshell->vdd)) {
+        dev_err(hall_device,"get clamshel vdd regulator failed");
+        return;
+    }
+    rc = regulator_enable(dclamshell->vdd);
+    if (rc) {
+        dev_err(hall_device,"enable clamshel vdd regulator failed");
+    }
+}
+#endif
 
 static int __maybe_unused
 gpio_keys_button_enable_wakeup(struct gpio_button_data *bdata)

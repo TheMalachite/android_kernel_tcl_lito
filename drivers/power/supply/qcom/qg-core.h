@@ -69,6 +69,11 @@ struct qg_dt {
 	bool			qg_ext_sense;
 	bool			use_cp_iin_sns;
 	bool			use_s7_ocv;
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	bool			tt_enabled;
+#endif
 	bool			qg_sleep_config;
 	bool			qg_fast_chg_cfg;
 	bool			fvss_enable;
@@ -108,6 +113,13 @@ struct qpnp_qg {
 	struct mutex		data_lock;
 	struct mutex		soc_lock;
 	wait_queue_head_t	qg_wait_q;
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	struct wakeup_source	*qg_ws;
+#endif
+
 	struct votable		*awake_votable;
 	struct votable		*vbatt_irq_disable_votable;
 	struct votable		*fifo_irq_disable_votable;
@@ -181,6 +193,12 @@ struct qpnp_qg {
 	unsigned long		suspend_time;
 	struct iio_channel	*batt_therm_chan;
 	struct iio_channel	*batt_id_chan;
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	struct iio_channel	*sub_btemp_chan;
+	struct iio_channel	*sub_bid_chan;
+	u32			sub_bid_ohm;
+#endif
 
 	/* soc params */
 	int			catch_up_soc;

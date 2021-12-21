@@ -27,6 +27,10 @@
 #include <soc/qcom/watchdog.h>
 #include <soc/qcom/minidump.h>
 
+/* [TCTNB-SYS][CrashDump]Begin added by Alvin.Lee for XR9930881 on 2020/09/14 */
+#include <soc/qcom/panic-reason.h>
+/* [TCTNB-SYS][CrashDump]-End- added by Alvin.Lee for XR9930881 on 2020/09/14 */
+
 #define EMERGENCY_DLOAD_MAGIC1    0x322A4F99
 #define EMERGENCY_DLOAD_MAGIC2    0xC67E4350
 #define EMERGENCY_DLOAD_MAGIC3    0x77777777
@@ -73,6 +77,12 @@ static void *emergency_dload_mode_addr;
 static bool scm_dload_supported;
 
 static bool force_warm_reboot;
+
+// Task: 9983126
+#ifdef CONFIG_MSM_SUBSYSTEM_RESTART
+extern char subsystem_panic[];
+static char* subsys_panic = subsystem_panic;
+#endif /* CONFIG_MSM_SUBSYSTEM_RESTART */
 
 /* interface for exporting attributes */
 struct reset_attribute {
@@ -136,6 +146,10 @@ static int panic_prep_restart(struct notifier_block *this,
 			      unsigned long event, void *ptr)
 {
 	in_panic = 1;
+/* [TCTNB-SYS][CrashDump]Begin added by Alvin.Lee for XR9930881 on 2020/09/14 */
+    machine_panic(ptr);
+/* [TCTNB-SYS][CrashDump]-End- added by Alvin.Lee for XR9930881 on 2020/09/14 */
+
 	return NOTIFY_DONE;
 }
 
@@ -464,6 +478,20 @@ static void halt_spmi_pmic_arbiter(void)
 	}
 }
 
+/* [TCT-SYS][SMARTLOG]Begin added by xiaoyang.ye, 2020-02-09, TASK-10730835 */
+#ifdef CONFIG_SMARTLOG_EMMC
+static unsigned int smartlog_always_enable = 0;
+
+static int __init smartlogtoken_setup(char *__unused)
+{
+    smartlog_always_enable = 1;
+    pr_err("smartlog always enable!\n");
+    return 1;
+}
+__setup("androidboot.smartlogtoken=true", smartlogtoken_setup);
+#endif
+/* [TCT-SYS][SMARTLOG]End added by xiaoyang.ye, TASK-10730835 */
+
 static void msm_restart_prepare(const char *cmd)
 {
 	bool need_warm_reset = false;
@@ -488,6 +516,15 @@ static void msm_restart_prepare(const char *cmd)
 
 	if (force_warm_reboot)
 		pr_info("Forcing a warm reset of the system\n");
+
+/* [TCT-SYS][SMARTLOG]Begin added by xiaoyang.ye, 2020-02-09, TASK-10730835 */
+#ifdef CONFIG_SMARTLOG_EMMC
+	if (smartlog_always_enable) {
+		/* WARM-RESET is needed for keeping PSTORE content in DDR */
+		need_warm_reset = true;
+	}
+#endif
+/* [TCT-SYS][SMARTLOG]End added by xiaoyang.ye, TASK-10730835 */
 
 	/* Hard reset the PMIC unless memory contents must be maintained. */
 	if (force_warm_reboot || need_warm_reset)
@@ -535,6 +572,45 @@ static void msm_restart_prepare(const char *cmd)
 		}
 	}
 
+// Task: 9983126
+#ifdef CONFIG_MSM_SUBSYSTEM_RESTART
+	if (in_panic != 0) {
+		pr_info("subsystem_%s_crash_leading_to_msm_restart.\n", subsystem_panic);
+		if (!memcmp(subsystem_panic, "modem", 5)) {
+			qpnp_pon_set_restart_reason(OEM_RESET_MODEM);
+			__raw_writel(0x6f656dc1, restart_reason);
+		} else if(!memcmp(subsystem_panic, "wcnss", 5)) {
+			qpnp_pon_set_restart_reason(OEM_RESET_WCNSS);
+			__raw_writel(0x6f656dc2, restart_reason);
+		} else if (!memcmp(subsystem_panic, "adsp", 4)) {
+			qpnp_pon_set_restart_reason(OEM_RESET_ADSP);
+			__raw_writel(0x6f656dc3, restart_reason);
+		} else if (!memcmp(subsystem_panic, "venus", 5)) {
+			qpnp_pon_set_restart_reason(OEM_RESET_VENUS);
+			__raw_writel(0x6f656dc4, restart_reason);
+		} else if (!memcmp(subsystem_panic, "slpi", 4)) {
+			qpnp_pon_set_restart_reason(OEM_RESET_SLPI);
+			__raw_writel(0x6f656dc5, restart_reason);
+		} else if(!memcmp(subsystem_panic, "gpu", 3)){
+			qpnp_pon_set_restart_reason(OEM_RESET_GPU);
+			__raw_writel(0x6f656dc6, restart_reason);
+		} else if(!memcmp(subsystem_panic, "cdsp", 4)){
+			qpnp_pon_set_restart_reason(OEM_RESET_CDSP);
+			__raw_writel(0x6f656dc7, restart_reason);
+		} else if(strstr(subsys_panic, "zap") != NULL) {
+			qpnp_pon_set_restart_reason(OEM_RESET_A512_ZAP);
+			__raw_writel(0x6f656dc8, restart_reason);
+		} else {
+			/* use oem specific code to identify panic */
+			qpnp_pon_set_restart_reason(OEM_RESET_KERNEL_PANIC);
+			__raw_writel(0x6f656dc0, restart_reason);
+		}
+		if (download_mode) {
+			set_dload_mode(1);
+		}
+	}
+#endif /* CONFIG_MSM_SUBSYSTEM_RESTART */
+
 	flush_cache_all();
 
 	/*outer_flush_all is not supported by 64bit kernel*/
@@ -578,8 +654,17 @@ static void do_msm_restart(enum reboot_mode reboot_mode, const char *cmd)
 	 * Trigger a watchdog bite here and if this fails,
 	 * device will take the usual restart path.
 	 */
+/* [TCT-SYS][SMARTLOG]Begin added by xiaoyang.ye, 2020-02-09, TASK-10730835 */
+#ifdef CONFIG_SMARTLOG_EMMC
+	if (!smartlog_always_enable){
+		if (WDOG_BITE_ON_PANIC && in_panic)
+			msm_trigger_wdog_bite();
+	}
+#else
 	if (WDOG_BITE_ON_PANIC && in_panic)
 		msm_trigger_wdog_bite();
+#endif
+/* [TCT-SYS][SMARTLOG]End added by xiaoyang.ye, TASK-10730835 */
 
 	scm_disable_sdi();
 	halt_spmi_pmic_arbiter();
@@ -650,6 +735,9 @@ static int msm_restart_probe(struct platform_device *pdev)
 
 	force_warm_reboot = of_property_read_bool(dev->of_node,
 						"qcom,force-warm-reboot");
+
+	// Task: 9983126
+	qpnp_pon_set_restart_reason(OEM_RESET_CRASH_UNKNOWN);
 
 	return 0;
 

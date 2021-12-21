@@ -450,14 +450,25 @@ static int count_num_free_block_pages(struct zone *zone, int bid)
 	int order, type;
 	unsigned long freecount = 0;
 	unsigned long flags;
+#ifdef CONFIG_TCT_MEMORY_DEFRAG
+	int i;
+#endif
 
 	spin_lock_irqsave(&zone->lock, flags);
 	for (type = 0; type < MIGRATE_TYPES; type++) {
+#ifdef CONFIG_TCT_MEMORY_DEFRAG
+		foreach_area_order(i, order, 0) {
+#else
 		for (order = 0; order < MAX_ORDER; ++order) {
+#endif
 			struct free_area *area;
 			struct page *page;
 
+#ifdef CONFIG_TCT_MEMORY_DEFRAG
+			area = &(zone->free_area[i][order]);
+#else
 			area = &(zone->free_area[order]);
+#endif
 			list_for_each_entry(page, &area->free_list[type], lru) {
 				unsigned long pfn = page_to_pfn(page);
 				int section_nr = pfn_to_section_nr(pfn);

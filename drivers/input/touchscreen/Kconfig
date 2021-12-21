@@ -1313,7 +1313,7 @@ config TOUCHSCREEN_ROHM_BU21023
 config TOUCHSCREEN_ST
 	tristate "STMicroelectronics Touchscreen Driver"
 	depends on I2C
-	default y
+	default n
 	help
 	  Say Y here if you have a STMicroelectronics Touchscreen.
 
@@ -1326,7 +1326,7 @@ source "drivers/input/touchscreen/st/Kconfig"
 config TOUCHSCREEN_SYNAPTICS_DSX
 	bool "Synaptics DSX Touchscreen Driver"
 	depends on I2C
-	default y
+	default n
 	help
 	  Say Y here if you have a Synaptics Touchscreen.
 
@@ -1340,7 +1340,7 @@ source "drivers/input/touchscreen/synaptics_dsx/Kconfig"
 config TOUCHSCREEN_SYNAPTICS_TCM
 	bool "Synaptics TCM Touchscreen Driver"
 	depends on I2C
-	default y
+	default n
 	help
 	  Say Y here if you have a Synaptics Touchscreen.
 
@@ -1353,6 +1353,48 @@ source "drivers/input/touchscreen/synaptics_tcm/Kconfig"
 
 source "drivers/input/touchscreen/focaltech_touch/Kconfig"
 
-source "drivers/input/touchscreen/nt36xxx/Kconfig"
+source "drivers/input/touchscreen/focaltech_touch_ft3658u/Kconfig"
 
+#begin add by kun.zheng for  irvine R  on 2020/12/28
+config TOUCHSCREEN_IRVINE_FT8756
+	bool "Irvine ft8756 Touchscreen Driver"
+	depends on SPI
+	default n
+	help
+	  Say Y here if you have a Synaptics Touchscreen.
+
+	  If unsure, say N.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called synaptics_tcm.
+
+source "drivers/input/touchscreen/focaltech_touch_ft8756/Kconfig"
+#end add by kun.zheng for  irvine R  on 2020/12/28
+
+config TOUCHSCREEN_ZINITIX
+	bool "Zinitix Touchscreen Driver"
+	depends on I2C
+	default n
+	help
+	  Say Y here if you have a Zinitix Touchscreen.
+	  If unsure, say N.
+	  To compile this driver as a module, choose M here: the
+	  module will be called zinitix.
+
+#begin add by xiongbo.huang for irvine 2nd on 20200830
+config TOUCHSCREEN_IRVINE_HX83113A
+	bool "Irvine hx83113a Touchscreen Driver"
+	depends on SPI
+	default n
+	help
+	  Say Y here if you have a Synaptics Touchscreen.
+	  If unsure, say N.
+	  To compile this driver as a module, choose M here: the
+	  module will be called synaptics_tcm.
+source "drivers/input/touchscreen/himax_hx83113a/Kconfig"
+#end add by xiongbo.huang for irvine 2nd on 20200830
+
+config TCT_TOUCH_GAME_MODE
+       bool "Enable tct touch game mode"
+       default n
 endif

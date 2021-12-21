@@ -18,6 +18,22 @@
 #define JEITA_VOTER		"JEITA_VOTER"
 #define JEITA_FCC_SCALE_VOTER	"JEITA_FCC_SCALE_VOTER"
 
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+#define CHG_CTL_VOTER	"CHG_CTL_VOTER"
+#define VBAT_LMT_VOTER	"VBAT_LMT_VOTER"
+#endif
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+#define STEP_CHG_VOTER2		"STEP_CHG_VOTER2"
+#define JEITA_VOTER2		"JEITA_VOTER2"
+#define CHG_CTL_VOTER2	"CHG_CTL_VOTER2"
+#define VBAT_LMT_VOTER2	"VBAT_LMT_VOTER2"
+
+#define FCC_STEP_DOWN_UA (100000)
+#define FCC_STEP_UP_UA (50000)
+#define FCC_GAPS_UA	(100000)
+#endif
+
 #define is_between(left, right, value) \
 		(((left) >= (right) && (left) >= (value) \
 			&& (value) >= (right)) \
@@ -49,6 +65,10 @@ struct step_chg_info {
 	bool			config_is_read;
 	bool			step_chg_cfg_valid;
 	bool			sw_jeita_cfg_valid;
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	bool			step_chg_cfg2_valid;
+	bool			sw_jeita_cfg2_valid;
+#endif
 	bool			soc_based_step_chg;
 	bool			ocv_based_step_chg;
 	bool			vbat_avg_based_step_chg;
@@ -58,16 +78,36 @@ struct step_chg_info {
 	int			jeita_fcc_index;
 	int			jeita_fv_index;
 	int			step_index;
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	int			jeita_fcc_index2;
+	int			jeita_fv_index2;
+	int			step_index2;
+	int			total_bcurrent_ua;
+	int			sub_bcurrent_ua;
+#endif
 	int			get_config_retry_count;
 	int			jeita_last_update_temp;
 	int			jeita_fcc_scaling_temp_threshold[2];
 	long			jeita_max_fcc_ua;
 	long			jeita_fcc_step_size;
 
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	int 			max_fv_uv;
+	bool			last_input_present;
+#endif
+
 	struct step_chg_cfg	*step_chg_config;
 	struct jeita_fcc_cfg	*jeita_fcc_config;
 	struct jeita_fv_cfg	*jeita_fv_config;
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	struct step_chg_cfg	*step_chg_config2;
+	struct jeita_fcc_cfg	*jeita_fcc_config2;
+	struct jeita_fv_cfg	*jeita_fv_config2;
+#endif
 
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	struct votable		*fv2_votable;
+#endif
 	struct votable		*fcc_votable;
 	struct votable		*fv_votable;
 	struct votable		*usb_icl_votable;
@@ -82,6 +122,12 @@ struct step_chg_info {
 };
 
 static struct step_chg_info *the_chip;
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+#define STEP_CHG_HYSTERISIS_DELAY_MS		5000
+#elif defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+#define STEP_CHG_HYSTERISIS_DELAY_MS		10000
+#endif
 
 #define STEP_CHG_HYSTERISIS_DELAY_US		5000000 /* 5 secs */
 
@@ -112,6 +158,7 @@ static bool is_bms_available(struct step_chg_info *chip)
 	return true;
 }
 
+#if !defined(CONFIG_TCT_PM7250_COMMON) && !defined(CONFIG_TCT_IRVINE_CHG_COMMON)
 static bool is_usb_available(struct step_chg_info *chip)
 {
 	if (!chip->usb_psy)
@@ -122,6 +169,7 @@ static bool is_usb_available(struct step_chg_info *chip)
 
 	return true;
 }
+#endif
 
 static bool is_input_present(struct step_chg_info *chip)
 {
@@ -289,6 +337,10 @@ static int get_step_chg_jeita_setting_from_profile(struct step_chg_info *chip)
 		return rc;
 	}
 
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	chip->max_fv_uv = max_fv_uv;
+#endif
+
 	rc = of_property_read_u32(profile_node, "qcom,fastchg-current-ma",
 					&max_fcc_ma);
 	if (rc < 0) {
@@ -312,12 +364,31 @@ static int get_step_chg_jeita_setting_from_profile(struct step_chg_info *chip)
 	chip->ocv_based_step_chg =
 		of_property_read_bool(profile_node, "qcom,ocv-based-step-chg");
 	if (chip->ocv_based_step_chg) {
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+		chip->step_chg_config->param.psy_prop =
+				POWER_SUPPLY_PROP_VOLTAGE_NOW;
+#else
 		chip->step_chg_config->param.psy_prop =
 				POWER_SUPPLY_PROP_VOLTAGE_OCV;
+#endif
 		chip->step_chg_config->param.prop_name = "OCV";
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	chip->step_chg_config->param.psy_prop = POWER_SUPPLY_PROP_MAIN_BVOLTAGE;
+	chip->step_chg_config->param.prop_name = "MAIN_BVOL";
+#endif
+
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+		chip->step_chg_config->param.rise_hys = 50000;
+		chip->step_chg_config->param.fall_hys = 50000;
+#else
 		chip->step_chg_config->param.rise_hys = 0;
 		chip->step_chg_config->param.fall_hys = 0;
+#endif
+
+#if !defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
 		chip->step_chg_config->param.use_bms = true;
+#endif
 	}
 
 	chip->vbat_avg_based_step_chg =
@@ -344,6 +415,20 @@ static int get_step_chg_jeita_setting_from_profile(struct step_chg_info *chip)
 		chip->step_chg_cfg_valid = false;
 	}
 
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	chip->step_chg_cfg2_valid = true;
+	rc = read_range_data_from_node(profile_node,
+			"qcom,step-chg-ranges2",
+			chip->step_chg_config2->fcc_cfg,
+			chip->soc_based_step_chg ? 100 : max_fv_uv,
+			max_fcc_ma * 1000);
+	if (rc < 0) {
+		pr_debug("Read qcom,step-chg-ranges2 failed from battery profile, rc=%d\n",
+					rc);
+		chip->step_chg_cfg2_valid = false;
+	}
+#endif
+
 	chip->sw_jeita_cfg_valid = true;
 	rc = read_range_data_from_node(profile_node,
 			"qcom,jeita-fcc-ranges",
@@ -354,6 +439,19 @@ static int get_step_chg_jeita_setting_from_profile(struct step_chg_info *chip)
 					rc);
 		chip->sw_jeita_cfg_valid = false;
 	}
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	chip->sw_jeita_cfg2_valid = true;
+	rc = read_range_data_from_node(profile_node,
+			"qcom,jeita-fcc-ranges2",
+			chip->jeita_fcc_config2->fcc_cfg,
+			BATT_HOT_DECIDEGREE_MAX, max_fcc_ma * 1000);
+	if (rc < 0) {
+		pr_debug("Read qcom,jeita-fcc-ranges2 failed from battery profile, rc=%d\n",
+					rc);
+		chip->sw_jeita_cfg2_valid = false;
+	}
+#endif
 
 	rc = of_property_read_u32_array(profile_node,
 			"qcom,step-jeita-hysteresis", hysteresis, 2);
@@ -373,6 +471,18 @@ static int get_step_chg_jeita_setting_from_profile(struct step_chg_info *chip)
 					rc);
 		chip->sw_jeita_cfg_valid = false;
 	}
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	rc = read_range_data_from_node(profile_node,
+			"qcom,jeita-fv-ranges2",
+			chip->jeita_fv_config2->fv_cfg,
+			BATT_HOT_DECIDEGREE_MAX, max_fv_uv);
+	if (rc < 0) {
+		pr_debug("Read qcom,jeita-fv-ranges2 failed from battery profile, rc=%d\n",
+					rc);
+		chip->sw_jeita_cfg2_valid = false;
+	}
+#endif
 
 	if (of_property_read_bool(profile_node, "qcom,jeita-fcc-scaling")) {
 
@@ -457,6 +567,24 @@ static void get_config_work(struct work_struct *work)
 			chip->jeita_fv_config->fv_cfg[i].high_threshold,
 			chip->jeita_fv_config->fv_cfg[i].value);
 
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	for (i = 0; i < MAX_STEP_CHG_ENTRIES; i++)
+		pr_debug("step-chg-cfg2: %duV(SoC) ~ %duV(SoC), %duA\n",
+			chip->step_chg_config2->fcc_cfg[i].low_threshold,
+			chip->step_chg_config2->fcc_cfg[i].high_threshold,
+			chip->step_chg_config2->fcc_cfg[i].value);
+	for (i = 0; i < MAX_STEP_CHG_ENTRIES; i++)
+		pr_debug("jeita-fcc-cfg2: %ddecidegree ~ %ddecidegre, %duA\n",
+			chip->jeita_fcc_config2->fcc_cfg[i].low_threshold,
+			chip->jeita_fcc_config2->fcc_cfg[i].high_threshold,
+			chip->jeita_fcc_config2->fcc_cfg[i].value);
+	for (i = 0; i < MAX_STEP_CHG_ENTRIES; i++)
+		pr_debug("jeita-fv-cfg2: %ddecidegree ~ %ddecidegre, %duV\n",
+			chip->jeita_fv_config2->fv_cfg[i].low_threshold,
+			chip->jeita_fv_config2->fv_cfg[i].high_threshold,
+			chip->jeita_fv_config2->fv_cfg[i].value);
+#endif
+
 	return;
 
 reschedule:
@@ -476,8 +604,16 @@ static int get_val(struct range_data *range, int rise_hys, int fall_hys,
 	 * If the threshold is lesser than the minimum allowed range,
 	 * return -ENODATA.
 	 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	if (threshold < 0 || threshold < range[0].low_threshold) {
+		pr_err("invalid lowest value: %d < %d\n",
+				threshold, range[0].low_threshold);
+		return -ENODATA;
+	}
+#else
 	if (threshold < range[0].low_threshold)
 		return -ENODATA;
+#endif
 
 	/* First try to find the matching index without hysteresis */
 	for (i = 0; i < MAX_STEP_CHG_ENTRIES; i++) {
@@ -485,6 +621,12 @@ static int get_val(struct range_data *range, int rise_hys, int fall_hys,
 			/* First invalid table entry; exit loop */
 			break;
 		}
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+		if (range[i].high_threshold == range[i].low_threshold) {
+			/* invalid table entry; exit loop */
+			break;
+		}
+#endif
 
 		if (is_between(range[i].low_threshold,
 			range[i].high_threshold, threshold)) {
@@ -504,7 +646,11 @@ static int get_val(struct range_data *range, int rise_hys, int fall_hys,
 	if (*new_index == -EINVAL) {
 		if (i == 0) {
 			/* Battery profile data array is completely invalid */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+			return -EINVAL;
+#else
 			return -ENODATA;
+#endif
 		}
 
 		*new_index = (i - 1);
@@ -547,6 +693,7 @@ static int get_val(struct range_data *range, int rise_hys, int fall_hys,
 	return 0;
 }
 
+#if !defined(CONFIG_TCT_PM7250_COMMON) 
 #define TAPERED_STEP_CHG_FCC_REDUCTION_STEP_MA		50000 /* 50 mA */
 static void taper_fcc_step_chg(struct step_chg_info *chip, int index,
 					int current_voltage)
@@ -589,7 +736,401 @@ static void taper_fcc_step_chg(struct step_chg_info *chip, int index,
 			current_fcc - TAPERED_STEP_CHG_FCC_REDUCTION_STEP_MA));
 	}
 }
+#endif
 
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+#define OV_VOTER "OV_VOTER"
+#define SOC_VOTER  "SOC_VOTER"
+#define VBATT_VOTER "VBATT_VOTER"
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+#define OV_VOTER2 "OV_VOTER2"
+#define VBATT_VOTER2 "VBATT_VOTER2"
+#endif
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+#define LIMIT_VBAT_OV	(4480000)
+#define LIMIT_VBAT_MAX	(4450000)
+#define LIMIT_VBAT_MIN	(4350000)
+#define LIMIT_VBAT_CV	(4400000)
+#else
+#define LIMIT_VBAT_OV	(4430000)
+#define LIMIT_VBAT_MAX	(4400000)
+#define LIMIT_VBAT_MIN	(4300000)
+#define LIMIT_VBAT_CV	(4350000)
+#endif
+
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+#define CV_DOWN_DELTA_UA	(150000)
+#else
+#define CV_DOWN_DELTA_UA	(200000)
+#endif
+#define CV_UP_DELTA_UA		(50000)
+#define MIN_FCC_UA		(500000)
+#define MAX_FCC_UA		(2000000)
+static int handle_vbatt_ov(struct step_chg_info *chip)
+{
+	union power_supply_propval pval = {0, };
+	int rc = 0;
+
+	if (!chip->fcc_votable)
+		chip->fcc_votable = find_votable("FCC");
+	if (!chip->fcc_votable) {
+		pr_err("fcc voter NULL\n");
+		return -EINVAL;
+	}
+
+	rc = power_supply_get_property(chip->batt_psy,
+				POWER_SUPPLY_PROP_VOLTAGE_NOW, &pval);
+	if (rc < 0 || (pval.intval <= LIMIT_VBAT_MAX)) {
+		pr_debug("vbatt-%d lower or rc-%d, restored\n", 
+				pval.intval, rc);
+		vote(chip->fcc_votable, OV_VOTER, false, 0);
+		return rc;
+	}
+
+	if (pval.intval >= LIMIT_VBAT_OV) {
+		pr_err("OV-%d, disabled chg\n", pval.intval);
+		vote(chip->fcc_votable, OV_VOTER, true, 0);
+	}
+
+	return 0;
+}
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+static int handle_main_vbatt_ov(struct step_chg_info *chip)
+{
+	union power_supply_propval pval = {0, };
+	int rc = 0;
+
+	if (!chip->fcc_votable)
+		return -EINVAL;
+
+	rc = power_supply_get_property(chip->batt_psy,
+				POWER_SUPPLY_PROP_MAIN_BVOLTAGE, &pval);
+	if (rc < 0 || (pval.intval <= LIMIT_VBAT_MAX)) {
+		pr_debug("Main: vbatt-%d lower or rc-%d, restored\n",
+				pval.intval, rc);
+		vote(chip->fcc_votable, OV_VOTER2, false, 0);
+		return rc;
+	}
+
+	if (pval.intval >= LIMIT_VBAT_OV) {
+		pr_err("Main: OV-%d, disabled chg\n", pval.intval);
+		vote(chip->fcc_votable, OV_VOTER2, true, 0);
+	}
+	return 0;
+}
+
+static int read_batt_current(struct step_chg_info *chip)
+{
+	union power_supply_propval pval = {0, };
+	int rc = 0;
+
+	rc = power_supply_get_property(chip->batt_psy,
+				POWER_SUPPLY_PROP_CURRENT_NOW, &pval);
+	if (rc < 0) {
+		pr_debug("Total current read error:%d\n", rc);
+		chip->total_bcurrent_ua = -EINVAL;
+		chip->sub_bcurrent_ua = -EINVAL;
+		return rc;
+	}
+	chip->total_bcurrent_ua = pval.intval;
+
+	rc = power_supply_get_property(chip->batt_psy,
+				POWER_SUPPLY_PROP_SUB_BCURRENT, &pval);
+	if (rc < 0) {
+		pr_debug("Sub current read error:%d\n", rc);
+		chip->sub_bcurrent_ua = -EINVAL;
+		return rc;
+	}
+	chip->sub_bcurrent_ua = pval.intval;
+
+	pr_err_ratelimited("%d,%d\n", chip->total_bcurrent_ua,
+			chip->sub_bcurrent_ua);
+	return 0;
+}
+#endif
+
+static int handle_vbatt_limit(struct step_chg_info *chip)
+{
+	union power_supply_propval pval = {0, };
+	int rc = 0;
+	int fcc_val_uA = 500000;
+
+	if (!chip->fcc_votable)
+		chip->fcc_votable = find_votable("FCC");
+	if (!chip->fcc_votable) {
+		pr_err("fcc voter NULL\n");
+		return -EINVAL;
+	}
+
+	rc = power_supply_get_property(chip->batt_psy,
+				POWER_SUPPLY_PROP_CAPACITY, &pval);
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	if (rc < 0 || pval.intval < 79) {
+		vote(chip->fcc_votable, SOC_VOTER, false, 0);
+	} else if (pval.intval >= 90) {
+		vote(chip->fcc_votable, SOC_VOTER, true, 1500000);
+	} else if (pval.intval >= 85) {
+		vote(chip->fcc_votable, SOC_VOTER, true, 1800000);
+	} else if (pval.intval >= 80) {
+		vote(chip->fcc_votable, SOC_VOTER, true, 2300000);
+	}
+#else
+	if (rc < 0 || pval.intval < 75) {
+		vote(chip->fcc_votable, SOC_VOTER, false, 0);
+	} else if (pval.intval >= 90) {
+		vote(chip->fcc_votable, SOC_VOTER, true, 1500000);
+	} else if (pval.intval >= 80) {
+		vote(chip->fcc_votable, SOC_VOTER, true, 2000000);
+	}
+#endif
+
+	rc = power_supply_get_property(chip->batt_psy,
+				POWER_SUPPLY_PROP_VOLTAGE_NOW, &pval);
+	if (rc < 0 || (pval.intval < LIMIT_VBAT_MIN)) {
+		pr_debug("vbatt-%d lower or rc-%d, restored\n",
+				pval.intval, rc);
+		vote(chip->fcc_votable, VBATT_VOTER, false, 0);
+		return rc;
+	}
+
+	fcc_val_uA = get_effective_result(chip->fcc_votable);
+	pr_err_ratelimited("f=%d, v=%d\n", fcc_val_uA, pval.intval);
+
+	if (pval.intval >= LIMIT_VBAT_MAX) {
+		if (fcc_val_uA > MIN_FCC_UA) {
+			fcc_val_uA -= CV_DOWN_DELTA_UA;
+			fcc_val_uA = max(fcc_val_uA, MIN_FCC_UA);
+			vote(chip->fcc_votable, VBATT_VOTER, true, fcc_val_uA);
+			pr_debug("down FCC to %d\n", fcc_val_uA);
+		}
+	} else if (pval.intval < LIMIT_VBAT_CV) {
+		if ((fcc_val_uA > 0) &&
+			(fcc_val_uA <= (MAX_FCC_UA - CV_UP_DELTA_UA))) {
+			fcc_val_uA += CV_UP_DELTA_UA;
+			vote(chip->fcc_votable, VBATT_VOTER, true, fcc_val_uA);
+			pr_debug("up FCC to %d\n", fcc_val_uA);
+		}
+	}
+	return 0;
+}
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+static int handle_main_vbatt_limit(struct step_chg_info *chip)
+{
+	union power_supply_propval pval = {0, };
+	int rc = 0;
+	int fcc_val_uA = 500000;
+
+	if (!chip->fcc_votable)
+		return -EINVAL;
+
+	rc = power_supply_get_property(chip->batt_psy,
+				POWER_SUPPLY_PROP_MAIN_BVOLTAGE, &pval);
+	if (rc < 0 || (pval.intval < LIMIT_VBAT_MIN)) {
+		pr_debug("Main: vbatt-%d lower or rc-%d, restored\n",
+				pval.intval, rc);
+		vote(chip->fcc_votable, VBATT_VOTER2, false, 0);
+		return rc;
+	}
+
+	fcc_val_uA = get_effective_result(chip->fcc_votable);
+	pr_err_ratelimited("Main: f=%d, v=%d\n", fcc_val_uA, pval.intval);
+
+	if (pval.intval >= LIMIT_VBAT_MAX) {
+		if (fcc_val_uA > MIN_FCC_UA) {
+			fcc_val_uA -= CV_DOWN_DELTA_UA;
+			fcc_val_uA = max(fcc_val_uA, MIN_FCC_UA);
+			vote(chip->fcc_votable, VBATT_VOTER2, true, fcc_val_uA);
+			pr_debug("Main vbat down FCC to %d\n", fcc_val_uA);
+		}
+	} else if (pval.intval < LIMIT_VBAT_CV) {
+		if ((fcc_val_uA > 0) &&
+			(fcc_val_uA <= (MAX_FCC_UA - CV_UP_DELTA_UA))) {
+			fcc_val_uA += CV_UP_DELTA_UA;
+			vote(chip->fcc_votable, VBATT_VOTER2, true, fcc_val_uA);
+			pr_debug("Main vbat up FCC to %d\n", fcc_val_uA);
+		}
+	}
+	return 0;
+}
+#endif
+
+#endif
+
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+static int handle_step_chg_config(struct step_chg_info *chip)
+{
+	union power_supply_propval pval = {0, };
+	int rc = 0, fcc_ua = 0;
+	u64 elapsed_ms;
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	int voted_fcc_ua = 0;
+#endif
+
+	if (!chip->step_chg_enable || !chip->step_chg_cfg_valid) {
+		pr_debug("step_chg disabled or invalid, %d, %d\n",
+				chip->step_chg_enable, chip->step_chg_cfg_valid);
+		return 0;
+	}
+
+	if (!chip->fcc_votable)
+		chip->fcc_votable = find_votable("FCC");
+	if (!chip->fcc_votable)
+		/* changing FCC is a must */
+		return -EINVAL;
+
+	elapsed_ms = ktime_ms_delta(ktime_get(), chip->step_last_update_time);
+	/* skip processing, event too early */
+	if (elapsed_ms < STEP_CHG_HYSTERISIS_DELAY_MS)
+		return 0;
+
+	rc = handle_vbatt_ov(chip);
+	if (rc < 0)
+		pr_err("Couldn't limit ov rc = %d\n", rc);
+
+	rc = handle_vbatt_limit(chip);
+	if (rc < 0)
+		pr_err("Couldn't limit vbat rc = %d\n", rc);
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	rc = handle_main_vbatt_ov(chip);
+	if (rc < 0)
+		pr_debug("Couldn't limit main vbatt ov rc = %d\n", rc);
+
+	rc = handle_main_vbatt_limit(chip);
+	if (rc < 0)
+		pr_debug("Couldn't limit main vbatt rc = %d\n", rc);
+#endif
+
+	if (chip->step_chg_config->param.use_bms)
+		rc = power_supply_get_property(chip->bms_psy,
+				chip->step_chg_config->param.psy_prop, &pval);
+	else
+		rc = power_supply_get_property(chip->batt_psy,
+				chip->step_chg_config->param.psy_prop, &pval);
+
+	if (rc < 0) {
+		pr_debug("Couldn't read %s property rc=%d\n",
+			chip->step_chg_config->param.prop_name, rc);
+		vote(chip->fcc_votable, STEP_CHG_VOTER, false, 0);
+		return rc;
+	}
+
+	rc = get_val(chip->step_chg_config->fcc_cfg,
+			chip->step_chg_config->param.rise_hys,
+			chip->step_chg_config->param.fall_hys,
+			chip->step_index,
+			pval.intval,
+			&chip->step_index,
+			&fcc_ua);
+	if (rc < 0) {
+		pr_debug("Couldn't get_val:%d from step_chg_config, rc=%d\n",
+				pval.intval, rc);
+		vote(chip->fcc_votable, STEP_CHG_VOTER, false, 0);
+		goto update_time;
+	}
+
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	if (chip->taper_fcc) {
+		taper_fcc_step_chg(chip, chip->step_index, pval.intval);
+	} else {
+		fcc_ua = chip->step_chg_config->fcc_cfg[chip->step_index].value;
+		vote(chip->fcc_votable, STEP_CHG_VOTER, true, fcc_ua);
+	}
+	pr_debug("%s = %d Step-FCC = %duA taper-fcc: %d index=%d\n",
+		chip->step_chg_config->param.prop_name, pval.intval,
+		get_client_vote(chip->fcc_votable, STEP_CHG_VOTER),
+		chip->taper_fcc, chip->step_index);
+#else
+
+	fcc_ua = chip->step_chg_config->fcc_cfg[chip->step_index].value;
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	if (fcc_ua > 0) {
+		voted_fcc_ua = get_effective_result(chip->fcc_votable);
+		if ((fcc_ua + chip->sub_bcurrent_ua) <= chip->total_bcurrent_ua) {
+			voted_fcc_ua -= FCC_STEP_DOWN_UA;
+			voted_fcc_ua = max(voted_fcc_ua, fcc_ua);
+		} else if ((fcc_ua + chip->sub_bcurrent_ua) >=
+				(chip->total_bcurrent_ua + FCC_GAPS_UA)) {
+			voted_fcc_ua += FCC_STEP_UP_UA;
+			voted_fcc_ua = clamp(voted_fcc_ua, fcc_ua,
+								(int)chip->jeita_max_fcc_ua);
+		}
+		vote(chip->fcc_votable, STEP_CHG_VOTER, true, voted_fcc_ua);
+	} else if (fcc_ua < 0) {
+		vote(chip->fcc_votable, STEP_CHG_VOTER, false, 0);
+	} else {
+		vote(chip->fcc_votable, STEP_CHG_VOTER, true, 0);
+	}
+#else
+	vote(chip->fcc_votable, STEP_CHG_VOTER, true, fcc_ua);
+#endif
+
+	pr_err("%s=%d, Step-FCC=%duA, index=%d\n",
+		chip->step_chg_config->param.prop_name, 
+		pval.intval,
+		get_client_vote(chip->fcc_votable, STEP_CHG_VOTER),
+		chip->step_index);
+#endif
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	if (chip->step_chg_cfg2_valid) {
+		rc = power_supply_get_property(chip->batt_psy,
+					chip->step_chg_config2->param.psy_prop, &pval);
+		if (rc < 0) {
+			pr_debug("Couldn't read %s property rc=%d\n",
+				chip->step_chg_config2->param.prop_name, rc);
+			vote(chip->fcc_votable, STEP_CHG_VOTER2, false, 0);
+			goto update_time;
+		}
+
+		rc = get_val(chip->step_chg_config2->fcc_cfg,
+				chip->step_chg_config2->param.rise_hys,
+				chip->step_chg_config2->param.fall_hys,
+				chip->step_index2,
+				pval.intval,
+				&chip->step_index2,
+				&fcc_ua);
+		if (rc < 0) {
+			pr_debug("Couldn't get_val:%d from step_chg_config2, rc=%d\n",
+					pval.intval, rc);
+			vote(chip->fcc_votable, STEP_CHG_VOTER2, false, 0);
+			goto update_time;
+		}
+
+		fcc_ua = chip->step_chg_config2->fcc_cfg[chip->step_index2].value;
+		if ((fcc_ua > 0) && (chip->sub_bcurrent_ua >= 0)) {
+			voted_fcc_ua = get_effective_result(chip->fcc_votable);
+			if (chip->sub_bcurrent_ua >= fcc_ua) {
+				voted_fcc_ua -= FCC_STEP_DOWN_UA;
+				voted_fcc_ua = max(voted_fcc_ua, fcc_ua);
+			} else if ((chip->sub_bcurrent_ua + FCC_GAPS_UA) <= fcc_ua) {
+				voted_fcc_ua += FCC_STEP_UP_UA;
+				voted_fcc_ua = clamp(voted_fcc_ua, fcc_ua,
+									(int)chip->jeita_max_fcc_ua);
+			}
+			vote(chip->fcc_votable, STEP_CHG_VOTER2, true, voted_fcc_ua);
+		} else if ((chip->sub_bcurrent_ua < 0) || (fcc_ua < 0)) {
+			vote(chip->fcc_votable, STEP_CHG_VOTER2, false, 0);
+		} else if (!fcc_ua) {
+			vote(chip->fcc_votable, STEP_CHG_VOTER2, true, 0);
+		}
+
+		pr_err("%s: %d,%d,%d,%d,%d\n",
+			chip->step_chg_config2->param.prop_name,
+			pval.intval, voted_fcc_ua, chip->sub_bcurrent_ua,
+			fcc_ua, get_client_vote(chip->fcc_votable, STEP_CHG_VOTER2));
+	}
+#endif
+
+update_time:
+	chip->step_last_update_time = ktime_get();
+	return 0;
+}
+#else
 static int handle_step_chg_config(struct step_chg_info *chip)
 {
 	union power_supply_propval pval = {0, };
@@ -671,12 +1212,155 @@ update_time:
 	chip->step_last_update_time = ktime_get();
 	return 0;
 }
+#endif
 
-static void handle_jeita_fcc_scaling(struct step_chg_info *chip)
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+#define FV_LVL_1	(300000)
+#define FV_LVL_2	(200000)
+#define FV_LVL_3	(100000)
+#define FV_LVL_4	(50000)
+#define FCC_LVL_1	(1500000)
+#define FCC_LVL_2	(1000000)
+#define FCC_LVL_3	(500000)
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+static int handle_jeita2(struct step_chg_info *chip)
 {
 	union power_supply_propval pval = {0, };
-	int fcc_ua = 0, temp_diff = 0, rc;
-	bool first_time_entry;
+	int rc = 0, fcc_ua = 0, fv_uv = 0;
+	int voted_fcc_ua = 0;
+
+	if (!chip->sw_jeita_cfg2_valid) {
+		pr_debug("sw_jeita2 invalid\n");
+		return 0;
+	}
+
+	rc = power_supply_get_property(chip->batt_psy,
+				chip->jeita_fcc_config2->param.psy_prop, &pval);
+	if (rc < 0) {
+		pr_debug("Couldn't read %s property rc=%d\n",
+				chip->jeita_fcc_config2->param.prop_name, rc);
+		vote(chip->fcc_votable, JEITA_VOTER2, false, 0);
+		vote(chip->fcc_votable, VBAT_LMT_VOTER2, false, 0);
+		vote(chip->fcc_votable, CHG_CTL_VOTER2, false, 0);
+		vote(chip->fv2_votable, VBAT_LMT_VOTER2, false, 0);
+		return rc;
+	}
+
+	rc = get_val(chip->jeita_fcc_config2->fcc_cfg,
+			chip->jeita_fcc_config2->param.rise_hys,
+			chip->jeita_fcc_config2->param.fall_hys,
+			chip->jeita_fcc_index2,
+			pval.intval,
+			&chip->jeita_fcc_index2,
+			&fcc_ua);
+	if (rc < 0) {
+		pr_debug("Couldn't get_val:%d from jeita_fcc_config2, rc=%d\n",
+				pval.intval, rc);
+		if (rc == -ENODATA)
+			fcc_ua = 0;
+		else
+			fcc_ua = -EINVAL;
+	}
+
+	if (!fcc_ua) {
+		vote(chip->fcc_votable, JEITA_VOTER2, true, 0);
+	} else if ((fcc_ua > 0) && (chip->sub_bcurrent_ua >= 0)) {
+		voted_fcc_ua = get_effective_result(chip->fcc_votable);
+		if (chip->sub_bcurrent_ua >= fcc_ua) {
+			voted_fcc_ua -= FCC_STEP_DOWN_UA;
+			voted_fcc_ua = max(voted_fcc_ua, fcc_ua);
+		} else if ((chip->sub_bcurrent_ua + FCC_GAPS_UA) <= fcc_ua) {
+			voted_fcc_ua += FCC_STEP_UP_UA;
+			voted_fcc_ua = clamp(voted_fcc_ua, fcc_ua,
+								(int)chip->jeita_max_fcc_ua);
+		}
+		vote(chip->fcc_votable, JEITA_VOTER2, true, voted_fcc_ua);
+	} else {
+		vote(chip->fcc_votable, JEITA_VOTER2, false, 0);
+	}
+
+	rc = get_val(chip->jeita_fv_config2->fv_cfg,
+			chip->jeita_fv_config2->param.rise_hys,
+			chip->jeita_fv_config2->param.fall_hys,
+			chip->jeita_fv_index2,
+			pval.intval,
+			&chip->jeita_fv_index2,
+			&fv_uv);
+	if (rc < 0)
+		fv_uv = 0;
+
+	if (fv_uv > 3600000 && fv_uv < chip->max_fv_uv) {
+		vote(chip->fv2_votable, VBAT_LMT_VOTER2, true, fv_uv);
+		rc = power_supply_get_property(chip->batt_psy,
+				POWER_SUPPLY_PROP_VOLTAGE_NOW, &pval);
+		if(rc < 0) {
+			vote(chip->fcc_votable, VBAT_LMT_VOTER2, false, 0);
+			vote(chip->fcc_votable, CHG_CTL_VOTER2, false, 0);
+		} else {
+			if (pval.intval > fv_uv) {
+				vote(chip->fcc_votable, CHG_CTL_VOTER2, true, 0);
+			} else if ((pval.intval+FV_LVL_4) < fv_uv) {
+				if ((pval.intval+FV_LVL_3) >= fv_uv) {
+					vote(chip->fcc_votable, VBAT_LMT_VOTER2, true, FCC_LVL_3);
+				} else if ((pval.intval+FV_LVL_2) >= fv_uv) {
+					vote(chip->fcc_votable, VBAT_LMT_VOTER2, true, FCC_LVL_2);
+				} else if ((pval.intval+FV_LVL_1) >= fv_uv) {
+					vote(chip->fcc_votable, VBAT_LMT_VOTER2, true, FCC_LVL_1);
+				} else {
+					vote(chip->fcc_votable, VBAT_LMT_VOTER2, false, 0);
+				}
+				vote(chip->fcc_votable, CHG_CTL_VOTER2, false, 0);
+			}
+		}
+	} else {
+		vote(chip->fv2_votable, VBAT_LMT_VOTER2, false, 0);
+		vote(chip->fcc_votable, VBAT_LMT_VOTER2, false, 0);
+		vote(chip->fcc_votable, CHG_CTL_VOTER2, false, 0);
+	}
+
+	pr_err("Sub: %d,%d,%d,%d,%d,%d,%d,%d\n",
+		pval.intval, fv_uv, voted_fcc_ua,
+		chip->sub_bcurrent_ua, fcc_ua,
+		get_effective_result(chip->fcc_votable),
+		chip->jeita_fcc_index2, chip->jeita_fv_index2);
+	return 0;
+}
+#endif
+
+static int handle_jeita(struct step_chg_info *chip)
+{
+	union power_supply_propval pval = {0, };
+	int rc = 0, fcc_ua = 0, fv_uv = 0;
+	u64 elapsed_ms = 0;
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	int voted_fcc_ua = 0;
+#endif
+
+	if (!chip->sw_jeita_enable || !chip->sw_jeita_cfg_valid) {
+		pr_debug("sw_jeita disabled or invalid, %d, %d\n",
+				chip->sw_jeita_enable, chip->sw_jeita_cfg_valid);
+		return 0;
+	}
+
+	if (!chip->fcc_votable)
+		chip->fcc_votable = find_votable("FCC");
+	if (!chip->fcc_votable)
+		/* changing FCC is a must */
+		return -EINVAL;
+
+	if (!chip->fv2_votable)
+		chip->fv2_votable = find_votable("FV2");
+	if (!chip->fv2_votable)
+		return -EINVAL;
+	elapsed_ms = ktime_ms_delta(ktime_get(), chip->jeita_last_update_time);
+	/* skip processing, event too early */
+	if (elapsed_ms < STEP_CHG_HYSTERISIS_DELAY_MS)
+		return 0;
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	read_batt_current(chip);
+#endif
 
 	if (chip->jeita_fcc_config->param.use_bms)
 		rc = power_supply_get_property(chip->bms_psy,
@@ -686,61 +1370,177 @@ static void handle_jeita_fcc_scaling(struct step_chg_info *chip)
 				chip->jeita_fcc_config->param.psy_prop, &pval);
 
 	if (rc < 0) {
-		pr_err("Couldn't read %s property rc=%d\n",
+		pr_debug("Couldn't read %s property rc=%d\n",
 				chip->jeita_fcc_config->param.prop_name, rc);
-		return;
+		vote(chip->fcc_votable, JEITA_VOTER, false, 0);
+		vote(chip->fcc_votable, VBAT_LMT_VOTER, false, 0);
+		vote(chip->fcc_votable, CHG_CTL_VOTER, false, 0);
+		vote(chip->fv2_votable, VBAT_LMT_VOTER, false, 0);
+		return rc;
 	}
 
-	/* Skip mitigation if temp is not within min-max thresholds */
-	if (!is_between(chip->jeita_fcc_scaling_temp_threshold[0],
-		chip->jeita_fcc_scaling_temp_threshold[1], pval.intval)) {
-		pr_debug("jeita-fcc-scaling : Skip jeita scaling, temp out of range temp = %d\n",
-			pval.intval);
-		chip->jeita_last_update_temp = pval.intval;
-		vote(chip->fcc_votable, JEITA_FCC_SCALE_VOTER, false, 0);
-		return;
+	rc = get_val(chip->jeita_fcc_config->fcc_cfg,
+			chip->jeita_fcc_config->param.rise_hys,
+			chip->jeita_fcc_config->param.fall_hys,
+			chip->jeita_fcc_index,
+			pval.intval,
+			&chip->jeita_fcc_index,
+			&fcc_ua);
+	if (rc < 0) {
+		pr_debug("Couldn't get_val:%d from jeita_fcc_config, rc=%d\n",
+				pval.intval, rc);
+		if (rc == -ENODATA)
+			fcc_ua = 0;
+		else
+			fcc_ua = -EINVAL;
 	}
-
-	/*
-	 * We determine this is the first time entry to jeita-fcc-scaling if
-	 * jeita_last_update_temp is not within entry/exist thresholds.
-	 */
-	first_time_entry = !is_between(chip->jeita_fcc_scaling_temp_threshold[0]
-		, chip->jeita_fcc_scaling_temp_threshold[1],
-		chip->jeita_last_update_temp);
-
-	/*
-	 * VOTE on FCC only when temp is within hys or if this the very first
-	 * time we crossed the entry threshold.
-	 */
-	if (first_time_entry ||
-		((pval.intval > (chip->jeita_last_update_temp +
-			chip->jeita_fcc_config->param.rise_hys)) ||
-		(pval.intval < (chip->jeita_last_update_temp -
-			chip->jeita_fcc_config->param.fall_hys)))) {
-
-		/*
-		 * New FCC step is calculated as :
-		 *	fcc_ua = (max-fcc - ((current_temp - min-temp) *
-		 *			jeita-step-size))
-		 */
-		temp_diff = pval.intval -
-				chip->jeita_fcc_scaling_temp_threshold[0];
-		fcc_ua = div_s64((chip->jeita_max_fcc_ua -
-			(chip->jeita_fcc_step_size * temp_diff)), 100) * 100;
-
-		vote(chip->fcc_votable, JEITA_FCC_SCALE_VOTER, true, fcc_ua);
-		pr_debug("jeita-fcc-scaling: first_time_entry = %d, max_fcc_ua = %ld, voted_fcc_ua = %d, temp_diff = %d, prev_temp = %d, current_temp = %d\n",
-			first_time_entry, chip->jeita_max_fcc_ua, fcc_ua,
-			temp_diff, chip->jeita_last_update_temp, pval.intval);
-
-		chip->jeita_last_update_temp = pval.intval;
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	if (!fcc_ua) {
+		vote(chip->fcc_votable, JEITA_VOTER, true, 0);
+	} else if (fcc_ua > 0) {
+		voted_fcc_ua = get_effective_result(chip->fcc_votable);
+		if ((fcc_ua + chip->sub_bcurrent_ua) <= chip->total_bcurrent_ua) {
+			voted_fcc_ua -= FCC_STEP_DOWN_UA;
+			voted_fcc_ua = max(voted_fcc_ua, fcc_ua);
+		} else if ((fcc_ua + chip->sub_bcurrent_ua) >=
+			(chip->total_bcurrent_ua + FCC_GAPS_UA)) {
+			voted_fcc_ua += FCC_STEP_UP_UA;
+			voted_fcc_ua = clamp(voted_fcc_ua, fcc_ua,
+								(int)chip->jeita_max_fcc_ua);
+		}
+		vote(chip->fcc_votable, JEITA_VOTER, true, voted_fcc_ua);
 	} else {
-		pr_debug("jeita-fcc-scaling: Skip jeita mitigation temp within first_time_entry = %d, hys temp = %d, last_updated_temp = %d\n",
-			first_time_entry, pval.intval,
-			chip->jeita_last_update_temp);
+		vote(chip->fcc_votable, JEITA_VOTER, false, 0);
 	}
+#else
+	vote(chip->fcc_votable, JEITA_VOTER, (fcc_ua>=0) ? true : false, fcc_ua);
+#endif
+
+	rc = get_val(chip->jeita_fv_config->fv_cfg,
+			chip->jeita_fv_config->param.rise_hys,
+			chip->jeita_fv_config->param.fall_hys,
+			chip->jeita_fv_index,
+			pval.intval,
+			&chip->jeita_fv_index,
+			&fv_uv);
+	if (rc < 0)
+		fv_uv = 0;
+
+	if (fv_uv > 3600000 && fv_uv < chip->max_fv_uv) {
+		vote(chip->fv2_votable, VBAT_LMT_VOTER, true, fv_uv);
+		rc = power_supply_get_property(chip->batt_psy,
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+				POWER_SUPPLY_PROP_MAIN_BVOLTAGE, &pval);
+#else
+				POWER_SUPPLY_PROP_VOLTAGE_NOW, &pval);
+#endif
+		if(rc < 0) {
+			vote(chip->fcc_votable, VBAT_LMT_VOTER, false, 0);
+			vote(chip->fcc_votable, CHG_CTL_VOTER, false, 0);
+		} else {
+			if (pval.intval > fv_uv) {
+				vote(chip->fcc_votable, CHG_CTL_VOTER, true, 0);
+			} else if ((pval.intval+FV_LVL_4) < fv_uv) {
+				if ((pval.intval+FV_LVL_3) >= fv_uv) {
+					vote(chip->fcc_votable, VBAT_LMT_VOTER, true, FCC_LVL_3);
+				} else if ((pval.intval+FV_LVL_2) >= fv_uv) {
+					vote(chip->fcc_votable, VBAT_LMT_VOTER, true, FCC_LVL_2);
+				} else if ((pval.intval+FV_LVL_1) >= fv_uv) {
+					vote(chip->fcc_votable, VBAT_LMT_VOTER, true, FCC_LVL_1);
+				} else {
+					vote(chip->fcc_votable, VBAT_LMT_VOTER, false, 0);
+				}
+				vote(chip->fcc_votable, CHG_CTL_VOTER, false, 0);
+			}
+		}
+	} else {
+		vote(chip->fv2_votable, VBAT_LMT_VOTER, false, 0);
+		vote(chip->fcc_votable, VBAT_LMT_VOTER, false, 0);
+		vote(chip->fcc_votable, CHG_CTL_VOTER, false, 0);
+	}
+
+	pr_err("Main: %d,%d,%d,%d,%d,%d\n", pval.intval, fv_uv, fcc_ua,
+		get_effective_result(chip->fcc_votable),
+		chip->jeita_fv_index, chip->jeita_fcc_index);
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	handle_jeita2(chip);
+#endif
+
+	chip->jeita_last_update_time = ktime_get();
+	return 0;
 }
+#else
+
+static void handle_jeita_fcc_scaling(struct step_chg_info *chip)
+{
+        union power_supply_propval pval = {0, };
+        int fcc_ua = 0, temp_diff = 0, rc;
+        bool first_time_entry;
+
+        if (chip->jeita_fcc_config->param.use_bms)
+                rc = power_supply_get_property(chip->bms_psy,
+                                chip->jeita_fcc_config->param.psy_prop, &pval);
+        else
+                rc = power_supply_get_property(chip->batt_psy,
+                                chip->jeita_fcc_config->param.psy_prop, &pval);
+
+        if (rc < 0) {
+                pr_err("Couldn't read %s property rc=%d\n",
+                                chip->jeita_fcc_config->param.prop_name, rc);
+                return;
+        }
+
+        /* Skip mitigation if temp is not within min-max thresholds */
+        if (!is_between(chip->jeita_fcc_scaling_temp_threshold[0],
+                chip->jeita_fcc_scaling_temp_threshold[1], pval.intval)) {
+                pr_debug("jeita-fcc-scaling : Skip jeita scaling, temp out of range temp = %d\n",
+                        pval.intval);
+                chip->jeita_last_update_temp = pval.intval;
+                vote(chip->fcc_votable, JEITA_FCC_SCALE_VOTER, false, 0);
+                return;
+        }
+
+        /*
+         * We determine this is the first time entry to jeita-fcc-scaling if
+         * jeita_last_update_temp is not within entry/exist thresholds.
+         */
+        first_time_entry = !is_between(chip->jeita_fcc_scaling_temp_threshold[0]
+                , chip->jeita_fcc_scaling_temp_threshold[1],
+                chip->jeita_last_update_temp);
+        /*
+         * VOTE on FCC only when temp is within hys or if this the very first
+         * time we crossed the entry threshold.
+         */
+        if (first_time_entry ||
+                ((pval.intval > (chip->jeita_last_update_temp +
+                        chip->jeita_fcc_config->param.rise_hys)) ||
+                (pval.intval < (chip->jeita_last_update_temp -
+                        chip->jeita_fcc_config->param.fall_hys)))) {
+
+                /*
+                 * New FCC step is calculated as :
+                 *      fcc_ua = (max-fcc - ((current_temp - min-temp) *
+                 *                      jeita-step-size))
+                 */
+                temp_diff = pval.intval -
+                                chip->jeita_fcc_scaling_temp_threshold[0];
+                fcc_ua = div_s64((chip->jeita_max_fcc_ua -
+                        (chip->jeita_fcc_step_size * temp_diff)), 100) * 100;
+
+                vote(chip->fcc_votable, JEITA_FCC_SCALE_VOTER, true, fcc_ua);
+                pr_debug("jeita-fcc-scaling: first_time_entry = %d, max_fcc_ua = %ld, voted_fcc_ua = %d, temp_diff = %d, prev_temp = %d, current_temp = %d\n",
+                        first_time_entry, chip->jeita_max_fcc_ua, fcc_ua,
+                        temp_diff, chip->jeita_last_update_temp, pval.intval);
+
+                chip->jeita_last_update_temp = pval.intval;
+        } else {
+                pr_debug("jeita-fcc-scaling: Skip jeita mitigation temp within first_time_entry = %d, hys temp = %d, last_updated_temp = %d\n",
+                        first_time_entry, pval.intval,
+                        chip->jeita_last_update_temp);
+        }
+}
+
 
 #define JEITA_SUSPEND_HYST_UV		50000
 static int handle_jeita(struct step_chg_info *chip)
@@ -858,6 +1658,7 @@ update_time:
 
 	return 0;
 }
+#endif
 
 static int handle_battery_insertion(struct step_chg_info *chip)
 {
@@ -892,17 +1693,123 @@ static int handle_battery_insertion(struct step_chg_info *chip)
 	return rc;
 }
 
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+#if defined(CONFIG_TCT_IEEE1725)
+#define IEEE_VOTER "IEEE_VOTER"
+#define LIMIT_LOWER_TEMP_LVL (30)
+#define LIMIT_UPPER_TEMP_LVL (50)
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+#define IEEE_VOTER2 "IEEE_VOTER2"
+#endif
+
+static int handle_ieee_limit(struct step_chg_info *chip)
+{
+	union power_supply_propval pval = {0, };
+	int rc = 0;
+
+	if (!chip->fcc_votable)
+		chip->fcc_votable = find_votable("FCC");
+	if (!chip->fcc_votable)
+		return -EINVAL;
+
+	rc = power_supply_get_property(chip->batt_psy,
+				POWER_SUPPLY_PROP_TEMP, &pval);
+	if (rc < 0) {
+		pr_err("Couldn't read batt temp, rc=%d\n", rc);
+		vote(chip->fcc_votable, IEEE_VOTER, false, 0);
+		return rc;
+	}
+
+	if (pval.intval < LIMIT_LOWER_TEMP_LVL) {
+		vote(chip->fcc_votable, IEEE_VOTER, true, 0);
+	} else if (pval.intval > LIMIT_UPPER_TEMP_LVL) {
+		vote(chip->fcc_votable, IEEE_VOTER, false, 0);
+	}
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	rc = power_supply_get_property(chip->batt_psy,
+				POWER_SUPPLY_PROP_SUB_BTEMP, &pval);
+	if (rc < 0) {
+		pr_debug("Couldn't read sub batt temp, rc=%d\n", rc);
+		vote(chip->fcc_votable, IEEE_VOTER2, false, 0);
+		return rc;
+	}
+
+	if (pval.intval < LIMIT_LOWER_TEMP_LVL) {
+		vote(chip->fcc_votable, IEEE_VOTER2, true, 0);
+	} else if (pval.intval > LIMIT_UPPER_TEMP_LVL) {
+		vote(chip->fcc_votable, IEEE_VOTER2, false, 0);
+	}
+#endif
+
+	return 0;
+}
+#endif
+#endif
+
 static void status_change_work(struct work_struct *work)
 {
 	struct step_chg_info *chip = container_of(work,
 			struct step_chg_info, status_change_work.work);
 	int rc = 0;
+
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	bool input_present = false;
+#endif
+#if !defined(CONFIG_TCT_PM7250_COMMON) && !defined(CONFIG_TCT_IRVINE_CHG_COMMON)
 	union power_supply_propval prop = {0, };
+#endif
 
 	if (!is_batt_available(chip) || !is_bms_available(chip))
 		goto exit_work;
 
 	handle_battery_insertion(chip);
+
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	input_present = is_input_present(chip);
+	if (!input_present && !chip->last_input_present) {
+		pr_debug("skip for input_present=%d\n", 
+				input_present);
+		goto exit_work;
+	}
+	chip->last_input_present = input_present;
+	if (!input_present) {
+		if (chip->fcc_votable) {
+			vote(chip->fcc_votable, VBAT_LMT_VOTER, false, 0);
+			vote(chip->fcc_votable, CHG_CTL_VOTER, false, 0);
+			vote(chip->fcc_votable, JEITA_VOTER, false, 0);
+			vote(chip->fcc_votable, STEP_CHG_VOTER, false, 0);
+			chip->step_index = -EINVAL;
+			chip->jeita_fcc_index = -EINVAL;
+			chip->jeita_fv_index = -EINVAL;
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+			vote(chip->fcc_votable, VBAT_LMT_VOTER2, false, 0);
+			vote(chip->fcc_votable, CHG_CTL_VOTER2, false, 0);
+			vote(chip->fcc_votable, JEITA_VOTER2, false, 0);
+			vote(chip->fcc_votable, STEP_CHG_VOTER2, false, 0);
+			chip->step_index2 = -EINVAL;
+			chip->jeita_fcc_index2 = -EINVAL;
+			chip->jeita_fv_index2 = -EINVAL;
+#endif
+		}
+		if (chip->fv2_votable) {
+			vote(chip->fv2_votable, VBAT_LMT_VOTER, false, 0);
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+			vote(chip->fv2_votable, VBAT_LMT_VOTER2, false, 0);
+#endif
+		}
+		goto exit_work;
+	}
+#endif
+
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+#if defined(CONFIG_TCT_IEEE1725)
+	rc = handle_ieee_limit(chip);
+	if (rc < 0)
+		pr_err("Couldn't limit ieee rc = %d\n", rc);
+#endif
+#endif
 
 	/* skip elapsed_us debounce for handling battery temperature */
 	rc = handle_jeita(chip);
@@ -913,6 +1820,7 @@ static void status_change_work(struct work_struct *work)
 	if (rc < 0)
 		pr_err("Couldn't handle step rc = %d\n", rc);
 
+#if !defined(CONFIG_TCT_PM7250_COMMON) && !defined(CONFIG_TCT_IRVINE_CHG_COMMON)
 	/* Remove stale votes on USB removal */
 	if (is_usb_available(chip)) {
 		prop.intval = 0;
@@ -924,6 +1832,7 @@ static void status_change_work(struct work_struct *work)
 						false, 0);
 		}
 	}
+#endif
 
 exit_work:
 	__pm_relax(chip->step_chg_ws);
@@ -938,10 +1847,25 @@ static int step_chg_notifier_call(struct notifier_block *nb,
 	if (ev != PSY_EVENT_PROP_CHANGED)
 		return NOTIFY_OK;
 
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	if (delayed_work_pending(&chip->status_change_work)) {
+		pr_debug("step status_change_work pending now, skip\n");
+		return NOTIFY_OK;
+	}
+#endif
+
 	if ((strcmp(psy->desc->name, "battery") == 0)
 			|| (strcmp(psy->desc->name, "usb") == 0)) {
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+		if (chip->config_is_read) {
+			__pm_stay_awake(chip->step_chg_ws);
+			queue_delayed_work(private_chg_wq,
+					&chip->status_change_work, 0);
+		}
+#else
 		__pm_stay_awake(chip->step_chg_ws);
 		schedule_delayed_work(&chip->status_change_work, 0);
+#endif
 	}
 
 	if ((strcmp(psy->desc->name, "bms") == 0)) {
@@ -995,15 +1919,36 @@ int qcom_step_chg_init(struct device *dev,
 	chip->jeita_fcc_index = -EINVAL;
 	chip->jeita_fv_index = -EINVAL;
 
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	chip->step_index2 = -EINVAL;
+	chip->jeita_fcc_index2 = -EINVAL;
+	chip->jeita_fv_index2 = -EINVAL;
+	chip->jeita_max_fcc_ua = 3800000;
+#endif
+
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	chip->max_fv_uv = -EINVAL;
+#endif
+
 	chip->step_chg_config = devm_kzalloc(dev,
 			sizeof(struct step_chg_cfg), GFP_KERNEL);
 	if (!chip->step_chg_config)
 		return -ENOMEM;
 
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	chip->step_chg_config->param.psy_prop = POWER_SUPPLY_PROP_MAIN_BVOLTAGE;
+	chip->step_chg_config->param.prop_name = "MAIN_BVOL";
+#else
 	chip->step_chg_config->param.psy_prop = POWER_SUPPLY_PROP_VOLTAGE_NOW;
 	chip->step_chg_config->param.prop_name = "VBATT";
+#endif
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	chip->step_chg_config->param.rise_hys = 50000;
+	chip->step_chg_config->param.fall_hys = 50000;
+#else
 	chip->step_chg_config->param.rise_hys = 100000;
 	chip->step_chg_config->param.fall_hys = 100000;
+#endif
 
 	chip->jeita_fcc_config = devm_kzalloc(dev,
 			sizeof(struct jeita_fcc_cfg), GFP_KERNEL);
@@ -1016,10 +1961,40 @@ int qcom_step_chg_init(struct device *dev,
 	chip->jeita_fcc_config->param.prop_name = "BATT_TEMP";
 	chip->jeita_fcc_config->param.rise_hys = 10;
 	chip->jeita_fcc_config->param.fall_hys = 10;
+
 	chip->jeita_fv_config->param.psy_prop = POWER_SUPPLY_PROP_TEMP;
 	chip->jeita_fv_config->param.prop_name = "BATT_TEMP";
 	chip->jeita_fv_config->param.rise_hys = 10;
 	chip->jeita_fv_config->param.fall_hys = 10;
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	chip->step_chg_config2 = devm_kzalloc(dev,
+			sizeof(struct step_chg_cfg), GFP_KERNEL);
+	if (!chip->step_chg_config2)
+		return -ENOMEM;
+
+	chip->jeita_fcc_config2 = devm_kzalloc(dev,
+			sizeof(struct jeita_fcc_cfg), GFP_KERNEL);
+	chip->jeita_fv_config2 = devm_kzalloc(dev,
+			sizeof(struct jeita_fv_cfg), GFP_KERNEL);
+	if (!chip->jeita_fcc_config2 || !chip->jeita_fv_config2)
+		return -ENOMEM;
+
+	chip->step_chg_config2->param.psy_prop = POWER_SUPPLY_PROP_VOLTAGE_NOW;
+	chip->step_chg_config2->param.prop_name = "SUB_BVOL";
+	chip->step_chg_config2->param.rise_hys = 50000;
+	chip->step_chg_config2->param.fall_hys = 50000;
+
+	chip->jeita_fcc_config2->param.psy_prop = POWER_SUPPLY_PROP_SUB_BTEMP;
+	chip->jeita_fcc_config2->param.prop_name = "SUB_BTEMP";
+	chip->jeita_fcc_config2->param.rise_hys = 10;
+	chip->jeita_fcc_config2->param.fall_hys = 10;
+
+	chip->jeita_fv_config2->param.psy_prop = POWER_SUPPLY_PROP_SUB_BTEMP;
+	chip->jeita_fv_config2->param.prop_name = "SUB_BTEMP";
+	chip->jeita_fv_config2->param.rise_hys = 10;
+	chip->jeita_fv_config2->param.fall_hys = 10;
+#endif
 
 	INIT_DELAYED_WORK(&chip->status_change_work, status_change_work);
 	INIT_DELAYED_WORK(&chip->get_config_work, get_config_work);

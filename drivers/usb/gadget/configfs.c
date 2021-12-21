@@ -319,19 +319,36 @@ static ssize_t gadget_dev_desc_UDC_store(struct config_item *item,
 
 	mutex_lock(&gi->lock);
 
+#if defined(CONFIG_TCT_PM7250_COMMON)
+	pr_err("UDC_store: name = '%s'\n", name);
+#endif
+
 	if (!strlen(name) || strcmp(name, "none") == 0) {
 		ret = unregister_gadget(gi);
+#if defined(CONFIG_TCT_PM7250_COMMON)
+		if (ret) {
+			pr_err("UDC_store: error-%d unregister\n", ret);
+			goto err;
+		}
+#else
 		if (ret)
 			goto err;
+#endif
 		kfree(name);
 	} else {
 		if (gi->composite.gadget_driver.udc_name) {
+#if defined(CONFIG_TCT_PM7250_COMMON)
+			pr_err("UDC_store: error BUSY\n");
+#endif
 			ret = -EBUSY;
 			goto err;
 		}
 		gi->composite.gadget_driver.udc_name = name;
 		ret = usb_gadget_probe_driver(&gi->composite.gadget_driver);
 		if (ret) {
+#if defined(CONFIG_TCT_PM7250_COMMON)
+			pr_err("UDC_store: error %d probe\n", ret);
+#endif
 			gi->composite.gadget_driver.udc_name = NULL;
 			goto err;
 		}

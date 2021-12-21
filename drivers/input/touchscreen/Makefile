@@ -112,5 +112,16 @@ obj-$(CONFIG_TOUCHSCREEN_ROHM_BU21023)	+= rohm_bu21023.o
 obj-$(CONFIG_TOUCHSCREEN_ST)		+= st/
 obj-$(CONFIG_TOUCHSCREEN_SYNAPTICS_DSX) += synaptics_dsx/
 obj-$(CONFIG_TOUCHSCREEN_SYNAPTICS_TCM)	+= synaptics_tcm/
-obj-$(CONFIG_TOUCHSCREEN_FTS)	+= focaltech_touch/
+#obj-$(CONFIG_TOUCHSCREEN_FTS)	+= focaltech_touch/
 obj-$(CONFIG_TOUCHSCREEN_NT36XXX)	+= nt36xxx/
+obj-$(CONFIG_TOUCHSCREEN_FTS)   += focaltech_touch_seattle/ # MODIFIED by hongwei.tian, 2020-02-26,BUG-8956218
+obj-$(CONFIG_TOUCHSCREEN_FTS_FT3658U)   += focaltech_touch_ft3658u/
+#begin add by xiongbo.huang for Irvine porting on 20200702
+obj-$(CONFIG_TOUCHSCREEN_IRVINE_FT8756) += focaltech_touch_ft8756/
+#end add by xiongbo.huang for Irvine porting on 20200702
+#begin add by xiongbo.huang for Irvine tp common function on 20200702
+obj-$(CONFIG_TCT_PROJECT_IRVINE) += TCT_TP_COMMON.o
+obj-$(CONFIG_TOUCHSCREEN_IRVINE_HX83113A) += himax_hx83113a/
+#end add by xiongbo.huang for Irvine tp common function on 20200702
+obj-$(CONFIG_TOUCHSCREEN_ZINITIX)   += zinitix/
+obj-$(CONFIG_TCT_TOUCH_GAME_MODE) += tct_touch_game.o

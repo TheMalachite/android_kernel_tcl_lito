@@ -302,7 +302,17 @@ static const char * const qpnp_poff_reason[] = {
 	[38] = "Triggered from S3_RESET_PBS_NACK",
 	[39] = "Triggered from S3_RESET_KPDPWR_ANDOR_RESIN",
 };
-
+// Add-begin by qiuguangliang for Long press power key 128s shutdown   in recovery mode FR8994298
+static bool recovery_mode = false;
+static int __init bootmode_setup(char *str)
+{
+	if (strcmp(str, "recovery") == 0) {
+        recovery_mode = true;
+    }
+       return 0;
+}
+__setup("androidboot.mode=", bootmode_setup);
+// Add-end by qiuguangliang for Long press power key 128s shutdown     in recovery mode FR8994298
 static int
 qpnp_pon_masked_write(struct qpnp_pon *pon, u16 addr, u8 mask, u8 val)
 {
@@ -955,7 +965,7 @@ static int qpnp_pon_input_dispatch(struct qpnp_pon *pon, u32 pon_type)
 		return -EINVAL;
 	}
 
-	pr_debug("PMIC input: code=%d, status=0x%02X\n", cfg->key_code,
+	pr_info("PMIC input: code=%d, status=0x%02X\n", cfg->key_code,
 		pon_rt_sts);
 	key_status = pon_rt_sts & pon_rt_bit;
 
@@ -1239,9 +1249,18 @@ static int qpnp_config_reset(struct qpnp_pon *pon, struct qpnp_pon_config *cfg)
 	if (rc)
 		return rc;
 
-	/* Enable S2 reset */
-	return qpnp_pon_masked_write(pon, cfg->s2_cntl2_addr,
+// Add-begin by qiuguangliang for Long press power key 128s shutdown   in recovery mode FR8994298
+	if (recovery_mode) {
+		printk("\033[44m [Recovery mode]  %s disable S2 reset \033[0m \n", __func__);
+		return qpnp_pon_masked_write(pon, cfg->s2_cntl2_addr,
+				     QPNP_PON_S2_CNTL_EN, 0);
+	} else {
+		/* Enable S2 reset */
+		return qpnp_pon_masked_write(pon, cfg->s2_cntl2_addr,
 				     QPNP_PON_S2_CNTL_EN, QPNP_PON_S2_CNTL_EN);
+	}
+
+// Add-end by qiuguangliang for Long press power key 128s shutdown   in recovery mode FR8994298
 }
 
 static int
@@ -2014,6 +2033,11 @@ static int qpnp_pon_configure_s3_reset(struct qpnp_pon *pon)
 	u8 src_val;
 	int rc;
 
+/* MODIFIED-BEGIN by hongwei.tian, 2019-09-27,BUG-8386237*/
+#ifdef CONFIG_TCT_GCF
+	return 0;
+#endif
+/* MODIFIED-END by hongwei.tian,BUG-8386237*/
 	/* Program S3 reset debounce time */
 	rc = of_property_read_u32(dev->of_node, "qcom,s3-debounce", &debounce);
 	if (!rc) {
@@ -2032,10 +2056,24 @@ static int qpnp_pon_configure_s3_reset(struct qpnp_pon *pon)
 		if (rc)
 			return rc;
 
-		rc = qpnp_pon_masked_write(pon, QPNP_PON_S3_DBC_CTL(pon),
+// Add-begin by qiuguangliang for Long press power key 128s shutdown   in recovery mode FR8994298
+		if (recovery_mode) {
+			printk("\033[44m [Recovery mode]  %s S3 reset set to 128s \033[0m \n", __func__);
+			rc = qpnp_pon_masked_write(pon, QPNP_PON_S3_DBC_CTL(pon),
+						QPNP_PON_S3_DBC_DELAY_MASK, ilog2(128));
+			if (rc)
+			{
+				return rc;
+			}
+		} else {
+			rc = qpnp_pon_masked_write(pon, QPNP_PON_S3_DBC_CTL(pon),
 					QPNP_PON_S3_DBC_DELAY_MASK, debounce);
-		if (rc)
-			return rc;
+			if (rc)
+			{
+				return rc;
+			}
+		}
+// Add-end by qiuguangliang for Long press power key 128s shutdown   in recovery mode FR8994298
 	}
 
 	/* Program S3 reset source */

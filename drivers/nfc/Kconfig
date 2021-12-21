@@ -54,6 +54,8 @@ source "drivers/nfc/pn533/Kconfig"
 source "drivers/nfc/microread/Kconfig"
 source "drivers/nfc/nfcmrvl/Kconfig"
 source "drivers/nfc/st21nfca/Kconfig"
+#[NFC]ADD ST NFC by na.long on 2019/10/19, 8457676
+source "drivers/nfc/st21nfcd/Kconfig"
 source "drivers/nfc/st-nci/Kconfig"
 source "drivers/nfc/nxp-nci/Kconfig"
 source "drivers/nfc/s3fwrn5/Kconfig"

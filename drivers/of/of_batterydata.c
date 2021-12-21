@@ -371,6 +371,18 @@ struct device_node *of_batterydata_get_best_profile(
 
 	if (best_node == NULL) {
 		pr_err("No battery data found\n");
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+		for_each_child_of_node(batterydata_container_node, node)
+		{
+			if(of_property_read_bool(node,"qcom,default-battery-type"))
+			{
+				best_node = node;
+				break;
+			}
+		}
+#endif
 		return best_node;
 	}
 

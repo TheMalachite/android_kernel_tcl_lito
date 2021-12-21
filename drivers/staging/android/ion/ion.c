@@ -41,6 +41,12 @@
 static struct ion_device *internal_dev;
 static atomic_long_t total_heap_bytes;
 
+#ifdef CONFIG_TCT_ION_MONITOR
+struct ion_device* get_ion_device(void){
+	return internal_dev;
+}
+#endif
+
 int ion_walk_heaps(int heap_id, enum ion_heap_type type, void *data,
 		   int (*f)(struct ion_heap *heap, void *data))
 {
@@ -1032,6 +1038,14 @@ static const struct dma_buf_ops dma_buf_ops = {
 	.vunmap = ion_dma_buf_vunmap,
 	.get_flags = ion_dma_buf_get_flags,
 };
+
+#ifdef CONFIG_TCT_ION_MONITOR
+bool is_ion_dma_buf(struct dma_buf* dmabuf){
+	if(dmabuf && dmabuf->ops == &dma_buf_ops)
+		return true;
+	return false;
+}
+#endif
 
 struct dma_buf *ion_alloc_dmabuf(size_t len, unsigned int heap_id_mask,
 				 unsigned int flags)

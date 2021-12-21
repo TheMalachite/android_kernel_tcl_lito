@@ -692,6 +692,20 @@ static void input_dev_release_keys(struct input_dev *dev)
 	int code;
 
 	if (is_event_supported(EV_KEY, dev->evbit, EV_MAX)) {
+#ifdef CONFIG_TCT_CLAMSHELL
+		for_each_set_bit(code, dev->key, KEY_CNT) {
+			if(code == 252)
+				continue;
+			if(__test_and_clear_bit(code, dev->key))
+			{
+				input_pass_event(dev, EV_KEY, code, 0);
+				need_sync = true;
+			}
+		}
+
+		if (need_sync)
+			input_pass_event(dev, EV_SYN, SYN_REPORT, 1);
+#else
 		for_each_set_bit(code, dev->key, KEY_CNT) {
 			input_pass_event(dev, EV_KEY, code, 0);
 			need_sync = true;
@@ -701,6 +715,7 @@ static void input_dev_release_keys(struct input_dev *dev)
 			input_pass_event(dev, EV_SYN, SYN_REPORT, 1);
 
 		memset(dev->key, 0, sizeof(dev->key));
+#endif
 	}
 }
 

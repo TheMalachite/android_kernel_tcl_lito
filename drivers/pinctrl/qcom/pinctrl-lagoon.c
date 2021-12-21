@@ -1615,10 +1615,15 @@ static const struct msm_pingroup lagoon_groups[] = {
 	[162] = SDC_QDSD_PINGROUP(sdc2_data, 0xa2000, 9, 0),
 	[163] = UFS_RESET(ufs_reset, 0xae000),
 };
-
+#ifdef CONFIG_TCT_LITO_OTTAWA
+static const int lagoon_reserved_gpios[] = {
+	13, 14, 15, 16, -1
+};
+#else
 static const int lagoon_reserved_gpios[] = {
 	13, 14, 15, 16, 45, 46, 56, 57, -1
 };
+#endif
 
 static struct msm_dir_conn lagoon_dir_conn[] = {
 	{-1, 0}, {-1, 0}, {-1, 0}, {-1, 0}, {-1, 0},

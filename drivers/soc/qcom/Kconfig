@@ -963,3 +963,11 @@ config ICNSS_QMI
 	  handshake messages to WLAN FW, which includes hardware capabilities
 	  and configurations. It also send WLAN on/off control message to FW
 	  over QMI channel.
+
+config PTN36502_I2C
+	bool "DP Redriver PTN36502 chip with I2C"
+	select REGMAP_I2C
+	depends on I2C
+	help
+	  Support for the PTN36502 IC switch chip controlled
+	  using I2C.

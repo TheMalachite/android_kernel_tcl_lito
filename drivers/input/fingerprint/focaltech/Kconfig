@@ -1,0 +1,14 @@
+#
+# Focaltech Fingerprint driver configuration
+#
+config FOCALTECH_FINGERPRINT
+	tristate "FocalTech Fingerprint"
+	depends on INPUT_FINGERPRINT
+	default n
+	help
+	  If you say Y to this option, support will be included for
+	  the FocalTech's fingerprint sensor. This driver supports
+	  both REE and TEE.
+
+	  This driver can also be built as a module. If so, the module
+	  will be called 'focaltech_fp'.

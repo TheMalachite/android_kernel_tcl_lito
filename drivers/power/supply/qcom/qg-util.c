@@ -376,8 +376,49 @@ int qg_get_battery_temp(struct qpnp_qg *chip, int *temp)
 	}
 	pr_debug("batt_temp = %d\n", *temp);
 
+//Deleted by qiuguangliang for task IRVR-3340
+//tempararyly disable temperatue protect to make it startup
+//#if defined(CONFIG_TCT_PROJECT_IRVINE)
+//	pr_info("AAAAAA temperature fixed at 25 degree! The real temp is=%d\n", *temp);
+//	*temp = 250;
+//#endif
+
+/* Begin added by hailong.chen for task 9656604 on 2020-08-14 */
+#if defined(DISABLE_TEMPERATURE_DETECTION_AND_THERMAL_POLICY)
+	pr_debug("temperature fixed at 25 degree! The real temp is=%d\n", *temp);
+	*temp = 250;
+#endif
+/* End added by hailong.chen for task 9656604 on 2020-08-14 */
+
 	return 0;
 }
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+int qg_get_sub_btemp(struct qpnp_qg *chip, int *temp)
+{
+	int rc = 0;
+
+	if (!chip->sub_btemp_chan) {
+		pr_debug("ERR: SUB_BTEMP channel missing\n");
+		*temp = 250;
+		return -EINVAL;
+	}
+
+	rc = iio_read_channel_processed(chip->sub_btemp_chan, temp);
+	if (rc < 0) {
+		pr_debug("Failed reading SUB_BTEMP over ADC rc=%d\n", rc);
+		return rc;
+	}
+	pr_debug("sub_btemp = %d\n", *temp);
+
+#if defined(DISABLE_TEMPERATURE_DETECTION_AND_THERMAL_POLICY)
+	pr_debug("sub_btemp fixed at 25 degree! The real sub_btemp is=%d\n", *temp);
+	*temp = 250;
+#endif
+
+	return 0;
+}
+#endif
 
 int qg_get_battery_current(struct qpnp_qg *chip, int *ibat_ua)
 {

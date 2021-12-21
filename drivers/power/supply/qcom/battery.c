@@ -45,6 +45,10 @@
 #define MAIN_FCC_VOTER			"MAIN_FCC_VOTER"
 #define PD_VOTER			"PD_VOTER"
 
+#if defined(CONFIG_TCT_OTTAWA_CHG_PATCH) || defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+#define DCIN_ICL_MIN_UA		(100000)
+#endif
+
 struct pl_data {
 	int			pl_mode;
 	int			pl_batfet_mode;
@@ -55,6 +59,9 @@ struct pl_data {
 	int			restricted_current;
 	bool			restricted_charging_enabled;
 	struct votable		*fcc_votable;
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	struct votable		*fv2_votable;
+#endif
 	struct votable		*fv_votable;
 	struct votable		*pl_disable_votable;
 	struct votable		*pl_awake_votable;
@@ -103,7 +110,15 @@ struct pl_data {
 	enum power_supply_type	charger_type;
 	/* debugfs directory */
 	struct dentry		*dfs_root;
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	bool		last_input_present;
+#endif
 	u32			float_voltage_uv;
+#if defined(CONFIG_TCT_OTTAWA_CHG_PATCH) || defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	struct votable		*dcin_icl_votable;
+#endif
 };
 
 struct pl_data *the_chip;
@@ -119,6 +134,17 @@ enum {
 
 static int debug_mask;
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+#define pl_dbg(chip, reason, fmt, ...)				\
+	do {								\
+		if (debug_mask & (reason))				\
+			pr_err_ratelimited(fmt, ##__VA_ARGS__);	\
+		else							\
+			pr_debug(fmt, ##__VA_ARGS__);		\
+	} while (0)
+#else
 #define pl_dbg(chip, reason, fmt, ...)				\
 	do {								\
 		if (debug_mask & (reason))				\
@@ -126,6 +152,7 @@ static int debug_mask;
 		else							\
 			pr_debug(fmt, ##__VA_ARGS__);		\
 	} while (0)
+#endif
 
 #define IS_USBIN(mode)	((mode == POWER_SUPPLY_PL_USBIN_USBIN) \
 			|| (mode == POWER_SUPPLY_PL_USBIN_USBIN_EXT))
@@ -141,6 +168,11 @@ enum {
 	PARALLEL_INPUT_MODE,
 	PARALLEL_OUTPUT_MODE,
 };
+
+#if defined(CONFIG_TCT_PM7250_COMMON) && defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+extern void ina2xx_rbatt_enable(bool enable);
+#endif
+
 /*********
  * HELPER*
  *********/
@@ -152,6 +184,20 @@ static bool is_usb_available(struct pl_data *chip)
 
 	return !!chip->usb_psy;
 }
+
+#if defined(CONFIG_TCT_PM7250_COMMON)
+static bool is_dc_available(struct pl_data *chip)
+{
+	if (chip->dc_psy)
+		return true;
+
+	chip->dc_psy = power_supply_get_by_name("dc");
+	if (!chip->dc_psy)
+		return false;
+
+	return true;
+}
+#endif
 
 static bool is_cp_available(struct pl_data *chip)
 {
@@ -239,8 +285,14 @@ static int get_adapter_icl_based_ilim(struct pl_data *chip)
 			final_icl = adapter_icl - main_icl;
 	}
 
+#if defined(CONFIG_TCT_PM7250_COMMON)
+	pl_dbg(chip, PR_PARALLEL,
+		"charger_type=%d final_icl=%d adapter_icl=%d main_icl=%d\n",
+		chip->charger_type, final_icl, adapter_icl, main_icl);
+#else
 	pr_debug("charger_type=%d final_icl=%d adapter_icl=%d main_icl=%d\n",
 		chip->charger_type, final_icl, adapter_icl, main_icl);
+#endif
 
 	return final_icl;
 }
@@ -260,7 +312,11 @@ static int get_adapter_icl_based_ilim(struct pl_data *chip)
  */
 static void cp_configure_ilim(struct pl_data *chip, const char *voter, int ilim)
 {
+#if defined(CONFIG_TCT_PM7250_COMMON)
+	int rc, fcc;
+#else
 	int rc, fcc, target_icl;
+#endif
 	union power_supply_propval pval = {0, };
 
 	if (!is_usb_available(chip))
@@ -269,12 +325,14 @@ static void cp_configure_ilim(struct pl_data *chip, const char *voter, int ilim)
 	if (!is_cp_available(chip))
 		return;
 
+#if !defined(CONFIG_TCT_PM7250_COMMON) 
 	if (cp_get_parallel_mode(chip, PARALLEL_OUTPUT_MODE)
 					== POWER_SUPPLY_PL_OUTPUT_VPH)
 		return;
 
 	target_icl = get_adapter_icl_based_ilim(chip);
 	ilim = (target_icl > 0) ? min(ilim, target_icl) : ilim;
+#endif
 
 	rc = power_supply_get_property(chip->cp_master_psy,
 				POWER_SUPPLY_PROP_MIN_ICL, &pval);
@@ -286,6 +344,10 @@ static void cp_configure_ilim(struct pl_data *chip, const char *voter, int ilim)
 
 	if (chip->cp_ilim_votable) {
 		fcc = get_effective_result_locked(chip->fcc_votable);
+
+#if defined(CONFIG_TCT_PM7250_COMMON) 
+		vote(chip->cp_ilim_votable, voter, true, ilim);
+#else
 		/*
 		 * If FCC >= (2 * MIN_ICL) then it is safe to enable CP
 		 * with MIN_ICL.
@@ -297,6 +359,7 @@ static void cp_configure_ilim(struct pl_data *chip, const char *voter, int ilim)
 			vote(chip->cp_ilim_votable, voter, true, pval.intval);
 		else
 			vote(chip->cp_ilim_votable, voter, true, ilim);
+#endif
 
 		/*
 		 * Rerun FCC votable to ensure offset for ILIM compensation is
@@ -304,9 +367,11 @@ static void cp_configure_ilim(struct pl_data *chip, const char *voter, int ilim)
 		 */
 		if (!chip->fcc_main_votable)
 			chip->fcc_main_votable = find_votable("FCC_MAIN");
+
 		if ((chip->charger_type == POWER_SUPPLY_TYPE_USB_HVDCP_3)
 				&& chip->fcc_main_votable)
 			rerun_election(chip->fcc_main_votable);
+
 
 		pl_dbg(chip, PR_PARALLEL,
 			"ILIM: vote: %d voter:%s min_ilim=%d fcc = %d\n",
@@ -938,6 +1003,64 @@ static int pl_fcc_main_vote_callback(struct votable *votable, void *data,
 			  &pval);
 }
 
+#if defined(CONFIG_TCT_PM7250_COMMON)
+static int pl_fcc_vote_callback(struct votable *votable, void *data,
+			int total_fcc_ua, const char *client)
+{
+	struct pl_data *chip = data;
+	int master_fcc_ua = total_fcc_ua, slave_fcc_ua = 0;
+	int cp_output_mode = POWER_SUPPLY_PL_OUTPUT_NONE;
+	union power_supply_propval pval = {0, };
+	int rc = 0;
+
+	if (total_fcc_ua < 0)
+		return 0;
+
+	if (!chip->main_psy)
+		return 0;
+
+	if (!chip->cp_disable_votable)
+		chip->cp_disable_votable = find_votable("CP_DISABLE");
+
+	if (chip->cp_disable_votable) {
+		cp_output_mode = cp_get_parallel_mode(chip, PARALLEL_OUTPUT_MODE);
+		if (cp_output_mode == POWER_SUPPLY_PL_OUTPUT_VBAT
+			|| cp_output_mode == POWER_SUPPLY_PL_OUTPUT_VPH) {
+			rc = power_supply_get_property(chip->cp_master_psy,
+					POWER_SUPPLY_PROP_MIN_ICL, &pval);
+			if (!rc) {
+			/*
+			 * With VPH output configuration ILIM is configured
+			 * independent of battery FCC, disable CP here if FCC/2
+			 * falls below MIN_ICL supported by CP.
+			 */
+			if (total_fcc_ua <= (pval.intval << 1))
+				vote(chip->cp_disable_votable, FCC_VOTER,
+						true, 0);
+			else
+				vote(chip->cp_disable_votable, FCC_VOTER,
+						false, 0);
+			}
+		}
+	}
+
+	if (chip->pl_mode != POWER_SUPPLY_PL_NONE) {
+		get_fcc_split(chip, total_fcc_ua, &master_fcc_ua,
+				&slave_fcc_ua);
+
+		if (slave_fcc_ua > MINIMUM_PARALLEL_FCC_UA) {
+			vote(chip->pl_disable_votable, PL_FCC_LOW_VOTER,
+							false, 0);
+		} else {
+			vote(chip->pl_disable_votable, PL_FCC_LOW_VOTER,
+							true, 0);
+		}
+	}
+
+	rerun_election(chip->pl_disable_votable);
+	return 0;
+}
+#else
 static int pl_fcc_vote_callback(struct votable *votable, void *data,
 			int total_fcc_ua, const char *client)
 {
@@ -1016,12 +1139,14 @@ static int pl_fcc_vote_callback(struct votable *votable, void *data,
 	}
 
 	rerun_election(chip->pl_disable_votable);
+
 	/* When FCC changes, trigger psy changed event for CC mode */
 	if (chip->cp_master_psy)
 		power_supply_changed(chip->cp_master_psy);
 
 	return 0;
 }
+#endif
 
 static void fcc_stepper_work(struct work_struct *work)
 {
@@ -1185,8 +1310,15 @@ stepper_exit:
 	cp_configure_ilim(chip, FCC_VOTER, chip->slave_fcc_ua / 2);
 
 	if (reschedule_ms) {
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+		queue_delayed_work(private_chg_wq, &chip->fcc_stepper_work,
+				msecs_to_jiffies(reschedule_ms));
+#else
 		schedule_delayed_work(&chip->fcc_stepper_work,
 				msecs_to_jiffies(reschedule_ms));
+#endif
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
 		pr_debug("Rescheduling FCC_STEPPER work\n");
 		return;
 	}
@@ -1205,6 +1337,88 @@ static bool is_batt_available(struct pl_data *chip)
 
 	return true;
 }
+
+#if defined(CONFIG_TCT_PM7250_COMMON)
+static bool is_usb_present(struct pl_data *chip)
+{
+	union power_supply_propval pval = {0, };
+
+	if (is_usb_available(chip))
+		power_supply_get_property(chip->usb_psy,
+			POWER_SUPPLY_PROP_PRESENT, &pval);
+
+	return pval.intval ? true : false;
+}
+
+static bool is_dc_present(struct pl_data *chip)
+{
+	union power_supply_propval pval = {0, };
+
+	if (is_dc_available(chip))
+		power_supply_get_property(chip->dc_psy,
+			POWER_SUPPLY_PROP_PRESENT, &pval);
+
+	return pval.intval ? true : false;
+}
+
+static bool is_input_present(struct pl_data *chip)
+{
+	return is_usb_present(chip) || is_dc_present(chip);
+}
+
+static void handle_safety_timer(struct pl_data *chip)
+{
+	int rc = 0;
+	union power_supply_propval pval = {1, };
+
+	if (!chip->batt_psy || !chip->last_input_present) {
+		pl_dbg(chip, PR_PARALLEL, "skip, input:%d\n",
+				chip->last_input_present);
+		return;
+	}
+
+	rc = power_supply_get_property(chip->batt_psy,
+			POWER_SUPPLY_PROP_SAFETY_TIMER_ENABLE, &pval);
+	if (rc < 0 || pval.intval) {
+		pl_dbg(chip, PR_PARALLEL, "skip, rc=%d, val=%d\n",
+				rc, pval.intval);
+		return;
+	}
+
+	rc = power_supply_get_property(chip->batt_psy,
+			POWER_SUPPLY_PROP_HEALTH, &pval);
+	if (rc < 0
+		|| pval.intval != POWER_SUPPLY_HEALTH_SAFETY_TIMER_EXPIRE) {
+		pl_dbg(chip, PR_PARALLEL, "skip, rc=%d, health=%d\n",
+				rc, pval.intval);
+		return;
+	}
+
+	pval.intval = 0;
+	rc = power_supply_set_property(chip->batt_psy,
+		POWER_SUPPLY_PROP_CHARGING_ENABLED, &pval);
+	if (rc < 0) {
+		pl_dbg(chip, PR_PARALLEL, "failed to set chg disabled\n");
+		return;
+	}
+
+	pval.intval = 1;
+	rc = power_supply_set_property(chip->batt_psy,
+		POWER_SUPPLY_PROP_CHARGING_ENABLED, &pval);
+	if (rc < 0) {
+		pl_dbg(chip, PR_PARALLEL, "failed to set chg enabled\n");
+		return;
+	}
+}
+#endif
+
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+static int pl_fv2_vote_callback(struct votable *votable, void *data,
+			int fv2_uv, const char *client)
+{
+	return 0;
+}
+#endif
 
 #define PARALLEL_FLOAT_VOLTAGE_DELTA_UV 50000
 static int pl_fv_vote_callback(struct votable *votable, void *data,
@@ -1229,7 +1443,13 @@ static int pl_fv_vote_callback(struct votable *votable, void *data,
 		return rc;
 	}
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	if (chip->pl_psy && chip->pl_mode != POWER_SUPPLY_PL_NONE) {
+#else
 	if (chip->pl_mode != POWER_SUPPLY_PL_NONE) {
+#endif
 		pval.intval += PARALLEL_FLOAT_VOLTAGE_DELTA_UV;
 		rc = power_supply_set_property(chip->pl_psy,
 				POWER_SUPPLY_PROP_VOLTAGE_MAX, &pval);
@@ -1283,6 +1503,7 @@ static int usb_icl_vote_callback(struct votable *votable, void *data,
 	if (client == NULL)
 		icl_ua = INT_MAX;
 
+#if !defined(CONFIG_TCT_PM7250_COMMON) 
 	/*
 	 * Disable parallel for new ICL vote - the call to split_settled will
 	 * ensure that all the input current limit gets assigned to the main
@@ -1302,9 +1523,16 @@ static int usb_icl_vote_callback(struct votable *votable, void *data,
 	if (icl_ua <= 1400000)
 		vote(chip->pl_enable_votable_indirect, USBIN_I_VOTER, false, 0);
 	else
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+		queue_delayed_work(private_chg_wq, &chip->status_change_work, 
+						msecs_to_jiffies(PL_DELAY_MS));
+#else
 		schedule_delayed_work(&chip->status_change_work,
 						msecs_to_jiffies(PL_DELAY_MS));
-
+#endif
+#endif
 	/* rerun AICL */
 	/* get the settled current */
 	rc = power_supply_get_property(chip->main_psy,
@@ -1333,7 +1561,9 @@ static int usb_icl_vote_callback(struct votable *votable, void *data,
 			POWER_SUPPLY_PROP_CURRENT_MAX,
 			&pval);
 
+#if !defined(CONFIG_TCT_PM7250_COMMON)
 	vote(chip->pl_disable_votable, ICL_CHANGE_VOTER, false, 0);
+#endif
 
 	/* Configure ILIM based on AICL result only if input mode is USBMID */
 	if (cp_get_parallel_mode(chip, PARALLEL_INPUT_MODE)
@@ -1352,9 +1582,40 @@ static int usb_icl_vote_callback(struct votable *votable, void *data,
 		if (!dc_present)
 			cp_configure_ilim(chip, ICL_CHANGE_VOTER, icl_ua);
 	}
-
 	return 0;
 }
+
+#if defined(CONFIG_TCT_OTTAWA_CHG_PATCH) || defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+static int dcin_icl_vote_callback(struct votable *votable, void *data,
+			int icl_ua, const char *client)
+{
+	struct pl_data *chip = data;
+	union power_supply_propval pval = {0, };
+	int rc = 0;
+
+	if (!chip->dc_psy) {
+		chip->dc_psy = power_supply_get_by_name("dc");
+		if (!chip->dc_psy)
+			return 0;
+	}
+
+	if ((client == NULL) || (icl_ua < DCIN_ICL_MIN_UA)) {
+		icl_ua = DCIN_ICL_MIN_UA;
+	}
+
+	pl_dbg(chip, PR_PARALLEL,
+			"set dcin icl to %d\n", icl_ua);
+
+	/* set the effective ICL */
+	pval.intval = icl_ua;
+	rc = power_supply_set_property(chip->dc_psy,
+			POWER_SUPPLY_PROP_CURRENT_MAX, &pval);
+	if (rc < 0) {
+		pr_err("Couldn't set DC ICL rc=%d\n", rc);
+	}
+	return rc;
+}
+#endif
 
 static void pl_disable_forever_work(struct work_struct *work)
 {
@@ -1416,8 +1677,21 @@ static int pl_disable_vote_callback(struct votable *votable,
 	}
 
 	total_fcc_ua = get_effective_result_locked(chip->fcc_votable);
+#if defined(CONFIG_TCT_PM7250_COMMON)
+	if (total_fcc_ua < 0) {
+		pr_err("skip, Invalid FCC:%d\n", total_fcc_ua);
+		return -EINVAL;
+	}
+#endif
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	if (chip->pl_psy && chip->pl_mode != POWER_SUPPLY_PL_NONE 
+		&& !pl_disable) {
+#else
 	if (chip->pl_mode != POWER_SUPPLY_PL_NONE && !pl_disable) {
+#endif
 		rc = validate_parallel_icl(chip, &disable);
 		if (rc < 0)
 			return rc;
@@ -1452,8 +1726,15 @@ static int pl_disable_vote_callback(struct votable *votable,
 			if (chip->step_fcc) {
 				vote(chip->pl_awake_votable, FCC_STEPPER_VOTER,
 					true, 0);
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+				queue_delayed_work(private_chg_wq, &chip->fcc_stepper_work,
+					0);
+#else
 				schedule_delayed_work(&chip->fcc_stepper_work,
 					0);
+#endif
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
 			}
 		} else {
 			/*
@@ -1554,9 +1835,19 @@ static int pl_disable_vote_callback(struct votable *votable,
 
 			/* main psy gets all share */
 			vote(chip->fcc_main_votable, MAIN_FCC_VOTER, true,
-								total_fcc_ua);
+						total_fcc_ua);
+#if defined(CONFIG_TCT_PM7250_COMMON) 
+			cp_ilim = total_fcc_ua;
+#else
 			cp_ilim = total_fcc_ua - get_effective_result_locked(
 							chip->fcc_main_votable);
+#endif
+
+#if defined(CONFIG_TCT_OTTAWA_CHG_PATCH) || defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+			pl_dbg(chip, PR_PARALLEL, "total_fcc_ua=%d, cp_ilim=%d\n",
+					total_fcc_ua, cp_ilim);
+#endif
+
 			if (cp_ilim > 0)
 				cp_configure_ilim(chip, FCC_VOTER, cp_ilim / 2);
 
@@ -1569,8 +1860,15 @@ static int pl_disable_vote_callback(struct votable *votable,
 			if (chip->step_fcc) {
 				vote(chip->pl_awake_votable, FCC_STEPPER_VOTER,
 					true, 0);
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+				queue_delayed_work(private_chg_wq, &chip->fcc_stepper_work,
+					0);
+#else
 				schedule_delayed_work(&chip->fcc_stepper_work,
 					0);
+#endif
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
 			}
 		}
 
@@ -1584,8 +1882,10 @@ static int pl_disable_vote_callback(struct votable *votable,
 		chip->pl_disable = (bool)pl_disable;
 	}
 
+#if !defined(CONFIG_TCT_PM7250_COMMON)
 	pl_dbg(chip, PR_PARALLEL, "parallel charging %s\n",
 		   pl_disable ? "disabled" : "enabled");
+#endif
 
 	return 0;
 }
@@ -1593,9 +1893,11 @@ static int pl_disable_vote_callback(struct votable *votable,
 static int pl_enable_indirect_vote_callback(struct votable *votable,
 			void *data, int pl_enable, const char *client)
 {
+#if !defined(CONFIG_TCT_PM7250_COMMON)
 	struct pl_data *chip = data;
 
 	vote(chip->pl_disable_votable, PL_INDIRECT_VOTER, !pl_enable, 0);
+#endif
 
 	return 0;
 }
@@ -1614,6 +1916,7 @@ static int pl_awake_vote_callback(struct votable *votable,
 	return 0;
 }
 
+#if !defined(CONFIG_TCT_PM7250_COMMON)
 static bool is_parallel_available(struct pl_data *chip)
 {
 	union power_supply_propval pval = {0, };
@@ -1678,7 +1981,9 @@ static bool is_parallel_available(struct pl_data *chip)
 
 	return true;
 }
+#endif
 
+#if !defined(CONFIG_TCT_PM7250_COMMON)
 static void handle_main_charge_type(struct pl_data *chip)
 {
 	union power_supply_propval pval = {0, };
@@ -1733,10 +2038,12 @@ static void handle_main_charge_type(struct pl_data *chip)
 	/* remember the new state only if it isn't any of the above */
 	chip->charge_type = pval.intval;
 }
+#endif
 
 #define MIN_ICL_CHANGE_DELTA_UA		300000
 static void handle_settled_icl_change(struct pl_data *chip)
 {
+#if !defined(CONFIG_TCT_PM7250_COMMON) 
 	union power_supply_propval pval = {0, };
 	int new_total_settled_ua;
 	int rc;
@@ -1745,7 +2052,13 @@ static void handle_settled_icl_change(struct pl_data *chip)
 	int total_current_ua;
 	bool disable = false;
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	total_current_ua = get_effective_result(chip->usb_icl_votable);
+#else
 	total_current_ua = get_effective_result_locked(chip->usb_icl_votable);
+#endif
 
 	/*
 	 * call aicl split only when USBIN_USBIN and enabled
@@ -1776,9 +2089,11 @@ static void handle_settled_icl_change(struct pl_data *chip)
 		vote(chip->pl_enable_votable_indirect, USBIN_I_VOTER, false, 0);
 	else
 		vote(chip->pl_enable_votable_indirect, USBIN_I_VOTER, true, 0);
+#endif
 
 	rerun_election(chip->fcc_votable);
 
+#if !defined(CONFIG_TCT_PM7250_COMMON)
 	if (IS_USBIN(chip->pl_mode)) {
 		/*
 		 * call aicl split only when USBIN_USBIN and enabled
@@ -1805,8 +2120,10 @@ static void handle_settled_icl_change(struct pl_data *chip)
 				split_settled(chip);
 		}
 	}
+#endif
 }
 
+#if !defined(CONFIG_TCT_PM7250_COMMON)
 static void handle_parallel_in_taper(struct pl_data *chip)
 {
 	union power_supply_propval pval = {0, };
@@ -1835,7 +2152,9 @@ static void handle_parallel_in_taper(struct pl_data *chip)
 		return;
 	}
 }
+#endif
 
+#if !defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_OTTAWA_CHG_PATCH) 
 static void handle_usb_change(struct pl_data *chip)
 {
 	int rc;
@@ -1873,11 +2192,65 @@ static void handle_usb_change(struct pl_data *chip)
 			chip->charger_type = pval.intval;
 	}
 }
+#endif
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+static bool is_input_present(struct pl_data *chip)
+{
+	int rc = 0, input_present = 0;
+	union power_supply_propval pval = {0, };
+
+	if (!chip->usb_psy)
+		chip->usb_psy = power_supply_get_by_name("usb");
+	if (chip->usb_psy) {
+		rc = power_supply_get_property(chip->usb_psy,
+				POWER_SUPPLY_PROP_PRESENT, &pval);
+		if (rc < 0)
+			pr_err("Couldn't read USB Present status, rc=%d\n", rc);
+		else
+			input_present |= pval.intval;
+	}
+
+	if (!chip->dc_psy)
+		chip->dc_psy = power_supply_get_by_name("dc");
+	if (chip->dc_psy) {
+		rc = power_supply_get_property(chip->dc_psy,
+				POWER_SUPPLY_PROP_PRESENT, &pval);
+		if (rc < 0)
+			pr_err("Couldn't read DC Present status, rc=%d\n", rc);
+		else
+			input_present |= pval.intval;
+	}
+
+	if (input_present)
+		return true;
+
+	return false;
+}
+#endif
 
 static void status_change_work(struct work_struct *work)
 {
 	struct pl_data *chip = container_of(work,
 			struct pl_data, status_change_work.work);
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	bool input_present = false;
+#endif
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	if (!is_batt_available(chip)) {
+		pl_dbg(chip, PR_PARALLEL, "skip for batt_psy is NULL\n");
+		__pm_relax(chip->pl_ws);
+		return;
+	}
+#endif
 
 	if (!chip->main_psy && is_main_available(chip)) {
 		/*
@@ -1890,18 +2263,73 @@ static void status_change_work(struct work_struct *work)
 		rerun_election(chip->fv_votable);
 	}
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	if (!chip->main_psy) {
+		pl_dbg(chip, PR_PARALLEL, "skip for main_psy is NULL\n");
+		__pm_relax(chip->pl_ws);
+		return;
+	}
+#else
 	if (!chip->main_psy)
 		return;
+#endif
 
+#if !defined(CONFIG_TCT_PM7250_COMMON)
 	if (!is_batt_available(chip))
 		return;
+#endif
 
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	input_present = is_input_present(chip);
+	if (!input_present && !chip->last_input_present) {
+		pl_dbg(chip, PR_PARALLEL, "skip for input_present=%d\n", 
+				input_present);
+		__pm_relax(chip->pl_ws);
+		return;
+	}
+#endif
+
+#if defined(CONFIG_TCT_PM7250_COMMON) && defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	if (input_present && !chip->last_input_present) {
+		ina2xx_rbatt_enable(true);
+	} else if (!input_present && chip->last_input_present) {
+		ina2xx_rbatt_enable(false);
+	}
+#endif
+
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	chip->last_input_present = input_present;
+#endif
+
+#if !defined(CONFIG_TCT_PM7250_COMMON)
 	is_parallel_available(chip);
+#endif
 
+#if !defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_OTTAWA_CHG_PATCH)
 	handle_usb_change(chip);
+#endif
+
+#if !defined(CONFIG_TCT_PM7250_COMMON)
 	handle_main_charge_type(chip);
+#endif
+
+#if defined(CONFIG_TCT_PM7250_COMMON) 
+	handle_safety_timer(chip);
+#endif
+
 	handle_settled_icl_change(chip);
+
+#if !defined(CONFIG_TCT_PM7250_COMMON)
 	handle_parallel_in_taper(chip);
+#endif
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	__pm_relax(chip->pl_ws);
+#endif
 }
 
 static int pl_notifier_call(struct notifier_block *nb,
@@ -1913,10 +2341,29 @@ static int pl_notifier_call(struct notifier_block *nb,
 	if (ev != PSY_EVENT_PROP_CHANGED)
 		return NOTIFY_OK;
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	if (delayed_work_pending(&chip->status_change_work)) {
+		pr_debug("status_change_work pending now, skip\n");
+		return NOTIFY_OK;
+	}
+#endif
+
 	if ((strcmp(psy->desc->name, "parallel") == 0)
 	    || (strcmp(psy->desc->name, "battery") == 0)
 	    || (strcmp(psy->desc->name, "main") == 0))
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	{
+		__pm_stay_awake(chip->pl_ws);
+		queue_delayed_work(private_chg_wq,
+						&chip->status_change_work, 0);
+	}
+#else
 		schedule_delayed_work(&chip->status_change_work, 0);
+#endif
 
 	return NOTIFY_OK;
 }
@@ -1937,7 +2384,14 @@ static int pl_register_notifier(struct pl_data *chip)
 
 static int pl_determine_initial_status(struct pl_data *chip)
 {
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	__pm_stay_awake(chip->pl_ws);
 	status_change_work(&chip->status_change_work.work);
+#else
+	status_change_work(&chip->status_change_work.work);
+#endif
 	return 0;
 }
 
@@ -2035,6 +2489,28 @@ int qcom_batt_init(struct charger_param *chg_param)
 		goto destroy_votable;
 	}
 
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	chip->fv2_votable = create_votable("FV2", VOTE_MIN,
+					pl_fv2_vote_callback,
+					chip);
+	if (IS_ERR(chip->fv2_votable)) {
+		rc = PTR_ERR(chip->fv2_votable);
+		chip->fv2_votable = NULL;
+		goto destroy_votable;
+	}
+#endif
+
+#if defined(CONFIG_TCT_OTTAWA_CHG_PATCH) || defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	chip->dcin_icl_votable = create_votable("DCIN_ICL", VOTE_MIN,
+					dcin_icl_vote_callback,
+					chip);
+	if (IS_ERR(chip->dcin_icl_votable)) {
+		rc = PTR_ERR(chip->dcin_icl_votable);
+		chip->dcin_icl_votable = NULL;
+		goto destroy_votable;
+	}
+#endif
+
 	chip->usb_icl_votable = create_votable("USB_ICL", VOTE_MIN,
 					usb_icl_vote_callback,
 					chip);
@@ -2052,6 +2528,13 @@ int qcom_batt_init(struct charger_param *chg_param)
 		chip->pl_disable_votable = NULL;
 		goto destroy_votable;
 	}
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	chip->pl_psy = NULL;
+#endif
+
 	vote(chip->pl_disable_votable, CHG_STATE_VOTER, true, 0);
 	vote(chip->pl_disable_votable, TAPER_END_VOTER, false, 0);
 	vote(chip->pl_disable_votable, PARALLEL_PSY_VOTER, true, 0);
@@ -2115,6 +2598,12 @@ destroy_votable:
 	destroy_votable(chip->fcc_votable);
 	destroy_votable(chip->fcc_main_votable);
 	destroy_votable(chip->usb_icl_votable);
+#if defined(CONFIG_TCT_OTTAWA_CHG_PATCH) || defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	destroy_votable(chip->dcin_icl_votable);
+#endif
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	destroy_votable(chip->fv2_votable);
+#endif
 release_wakeup_source:
 	wakeup_source_unregister(chip->pl_ws);
 cleanup:
@@ -2141,6 +2630,12 @@ void qcom_batt_deinit(void)
 	destroy_votable(chip->fv_votable);
 	destroy_votable(chip->fcc_votable);
 	destroy_votable(chip->fcc_main_votable);
+#if defined(CONFIG_TCT_OTTAWA_CHG_PATCH) || defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	destroy_votable(chip->dcin_icl_votable);
+#endif
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	destroy_votable(chip->fv2_votable);
+#endif
 	wakeup_source_unregister(chip->pl_ws);
 	the_chip = NULL;
 	kfree(chip);

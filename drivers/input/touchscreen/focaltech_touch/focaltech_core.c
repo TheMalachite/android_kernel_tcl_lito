@@ -66,7 +66,7 @@
 * Global variable or extern global variabls/functions
 *****************************************************************************/
 struct fts_ts_data *fts_data;
-
+// chenhaojunm
 #if defined(CONFIG_DRM)
 static struct drm_panel *active_panel;
 #endif

@@ -3,6 +3,12 @@
  * Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
  */
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+#define pr_fmt(fmt) "[PDPHY]: %s: " fmt, __func__
+#endif
+
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/slab.h>
@@ -19,6 +25,13 @@
 #include <linux/sched.h>
 #include <linux/wait.h>
 #include "usbpd.h"
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+#include <linux/power_supply.h>
+#endif
+
 
 #define USB_PDPHY_MAX_DATA_OBJ_LEN	28
 #define USB_PDPHY_MSG_HDR_LEN		2
@@ -789,6 +802,15 @@ static int pdphy_probe(struct platform_device *pdev)
 	int ret;
 	unsigned int base;
 	struct usb_pdphy *pdphy;
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	if (!power_supply_get_by_name("usb")) {
+		pr_err("Could not get USB power_supply, deferring pdphy probe\n");
+		return -EPROBE_DEFER;
+	}
+#endif
 
 	pdphy = devm_kzalloc(&pdev->dev, sizeof(*pdphy), GFP_KERNEL);
 	if (!pdphy)

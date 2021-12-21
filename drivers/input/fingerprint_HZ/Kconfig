@@ -1,0 +1,27 @@
+#added by weiqiang.zhou for porting fingerprint
+
+config FINGERPRINT_SUPPORT
+    tristate "Fingerprint"
+    default n
+    help
+      If you say Y to this option, support will be included for
+      the fingerprint sensor. This driver supports
+      both REE and TEE.
+
+config FOCALTECH_FINGERPRINT
+    tristate "FocalTech Fingerprint"
+    default n
+    help
+      If you say Y to this option, support will be included for
+      the FocalTech's fingerprint sensor. This driver supports
+      both REE and TEE.
+
+      This driver can also be built as a module. If so, the module
+      will be called 'focaltech_fp'.
+
+config GOODIX_FINGERPRINT
+	tristate "generic goodix fingerprint driver"
+	default n
+	help
+	add support for goodix fingerprint driver.
+

@@ -37,7 +37,17 @@
 #include "qg-battery-profile.h"
 #include "qg-defs.h"
 
+/* Begin modified by hailong.chen for task 9661358 on 2020-09-11 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+static int qg_debug_mask = QG_DEBUG_PON | QG_DEBUG_PROFILE | \
+						   QG_DEBUG_SOC | QG_DEBUG_PM | \
+						   QG_DEBUG_ALG_CL | QG_DEBUG_ESR;
+#elif defined(CONFIG_TCT_PM7250_COMMON)
+static int qg_debug_mask = QG_DEBUG_PON;
+#else
 static int qg_debug_mask;
+#endif
+/* End modified by hailong.chen for task 9661358 on 2020-09-11 */
 
 static int qg_esr_mod_count = 30;
 static ssize_t esr_mod_count_show(struct device *dev, struct device_attribute
@@ -120,6 +130,63 @@ static bool is_battery_present(struct qpnp_qg *chip)
 	return present;
 }
 
+#if defined(CONFIG_TCT_PM7250_COMMON) || \
+	defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+#define VALID_BATT_ID_82K_LOW (69700)
+#define VALID_BATT_ID_82K_HIGH (94300)
+
+#define VALID_BATT_ID_18K_LOW (15300)
+#define VALID_BATT_ID_18K_HIGH (20700)
+#endif
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+static bool is_debug_sub_bid(struct qpnp_qg *chip)
+{
+	if (is_between(VALID_BATT_ID_82K_LOW, VALID_BATT_ID_82K_HIGH,
+				chip->sub_bid_ohm))
+		return false;
+
+	if (is_between(VALID_BATT_ID_18K_LOW, VALID_BATT_ID_18K_HIGH,
+				chip->sub_bid_ohm))
+		return false;
+
+	return true;
+}
+#endif
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_GCF) || \
+	defined(CONFIG_TCT_IEEE1725) || \
+	defined(CONFIG_TCT_CB) || \
+	defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+static bool is_debug_batt_id(struct qpnp_qg *chip)
+{
+	if (is_between(VALID_BATT_ID_82K_LOW, VALID_BATT_ID_82K_HIGH,
+				chip->batt_id_ohm))
+		return false;
+
+	if (is_between(VALID_BATT_ID_18K_LOW, VALID_BATT_ID_18K_HIGH,
+				chip->batt_id_ohm))
+		return false;
+
+	/* currently for bsp branch debug purpose,
+	    no need sub battery to connected to charge. */
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	//if (!is_debug_sub_bid(chip))
+		return false;
+#endif
+
+	return true;
+}
+#else
+static bool is_debug_batt_id(struct qpnp_qg *chip)
+{
+	return false;
+}
+#endif
+#else
 #define DEBUG_BATT_ID_LOW	6000
 #define DEBUG_BATT_ID_HIGH	8500
 static bool is_debug_batt_id(struct qpnp_qg *chip)
@@ -130,6 +197,7 @@ static bool is_debug_batt_id(struct qpnp_qg *chip)
 
 	return false;
 }
+#endif
 
 static int qg_read_ocv(struct qpnp_qg *chip, u32 *ocv_uv, u32 *ocv_raw, u8 type)
 {
@@ -836,6 +904,14 @@ static void qg_retrieve_esr_params(struct qpnp_qg *chip)
 
 	rc = qg_sdam_read(SDAM_ESR_CHARGE_DELTA, &data);
 	if (!rc && data) {
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+		if (abs((int)data) > 10) {
+			pr_err("abnormal chg esr: 0x%x\n", data);
+			data = 0;
+		}
+#endif
 		chip->kdata.param[QG_ESR_CHARGE_DELTA].data = data;
 		chip->kdata.param[QG_ESR_CHARGE_DELTA].valid = true;
 		qg_dbg(chip, QG_DEBUG_ESR,
@@ -846,6 +922,14 @@ static void qg_retrieve_esr_params(struct qpnp_qg *chip)
 
 	rc = qg_sdam_read(SDAM_ESR_DISCHARGE_DELTA, &data);
 	if (!rc && data) {
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+		if (abs((int)data) > 10) {
+			pr_err("abnormal dischg esr: 0x%x\n", data);
+			data = 0;
+		}
+#endif
 		chip->kdata.param[QG_ESR_DISCHARGE_DELTA].data = data;
 		chip->kdata.param[QG_ESR_DISCHARGE_DELTA].valid = true;
 		qg_dbg(chip, QG_DEBUG_ESR,
@@ -883,16 +967,38 @@ static void qg_store_esr_params(struct qpnp_qg *chip)
 
 	if (chip->udata.param[QG_ESR_CHARGE_DELTA].valid) {
 		esr = chip->udata.param[QG_ESR_CHARGE_DELTA].data;
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+		if (abs((int)esr) < 10) {
+			qg_sdam_write(SDAM_ESR_CHARGE_DELTA, esr);
+			qg_dbg(chip, QG_DEBUG_ESR,
+				"SDAM store ESR_CHARGE_DELTA=0x%x\n", esr);
+		}
+#else
 		qg_sdam_write(SDAM_ESR_CHARGE_DELTA, esr);
 		qg_dbg(chip, QG_DEBUG_ESR,
 			"SDAM store ESR_CHARGE_DELTA=%d\n", esr);
+#endif
 	}
 
 	if (chip->udata.param[QG_ESR_DISCHARGE_DELTA].valid) {
 		esr = chip->udata.param[QG_ESR_DISCHARGE_DELTA].data;
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+		if (abs((int)esr) < 10) {
+			qg_sdam_write(SDAM_ESR_DISCHARGE_DELTA, esr);
+			qg_dbg(chip, QG_DEBUG_ESR,
+				"SDAM store ESR_DISCHARGE_DELTA=0x%x\n", esr);
+		}
+#else
 		qg_sdam_write(SDAM_ESR_DISCHARGE_DELTA, esr);
 		qg_dbg(chip, QG_DEBUG_ESR,
 			"SDAM store ESR_DISCHARGE_DELTA=%d\n", esr);
+#endif
 	}
 
 	if (chip->udata.param[QG_ESR_CHARGE_SF].valid) {
@@ -1208,6 +1314,12 @@ static void process_udata_work(struct work_struct *work)
 			struct qpnp_qg, udata_work);
 	int rc;
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	mutex_lock(&chip->data_lock);
+#endif
+
 	if (chip->udata.param[QG_CC_SOC].valid)
 		chip->cc_soc = chip->udata.param[QG_CC_SOC].data;
 
@@ -1240,6 +1352,20 @@ static void process_udata_work(struct work_struct *work)
 			chip->catch_up_soc = chip->udata.param[QG_SOC].data;
 		}
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	if (chip->catch_up_soc == 0) {
+		int vbat_uv = 0;
+		int vcutoff_uv = chip->dt.vbatt_cutoff_mv * 1000;
+		qg_get_battery_voltage(chip, &vbat_uv);
+		if (vbat_uv >= vcutoff_uv) {
+			pr_debug("%d >= %d, keep report soc=1\n", vbat_uv, vcutoff_uv);
+			chip->catch_up_soc = 1;
+		}
+	}
+#endif
+
 		qg_scale_soc(chip, chip->force_soc);
 		chip->force_soc = false;
 
@@ -1259,6 +1385,14 @@ static void process_udata_work(struct work_struct *work)
 	if (chip->udata.param[QG_ESR].valid)
 		chip->esr_last = chip->udata.param[QG_ESR].data;
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	pr_err_ratelimited("userspace write rbat=%d, esr=%d\n", 
+			chip->sdam_data[SDAM_RBAT_MOHM],
+			chip->esr_last);
+#endif
+
 	if (chip->esr_actual != -EINVAL && chip->udata.param[QG_ESR].valid) {
 		chip->esr_nominal = chip->udata.param[QG_ESR].data;
 		if (chip->qg_psy)
@@ -1272,6 +1406,13 @@ static void process_udata_work(struct work_struct *work)
 		(chip->batt_soc != INT_MIN) ? chip->batt_soc : -EINVAL,
 		(chip->cc_soc != INT_MIN) ? chip->cc_soc : -EINVAL,
 		chip->full_soc, chip->esr_last);
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	mutex_unlock(&chip->data_lock);
+#endif
+
 	vote(chip->awake_votable, UDATA_READY_VOTER, false, 0);
 }
 
@@ -1397,8 +1538,24 @@ static irqreturn_t qg_vbat_empty_handler(int irq, void *data)
 
 	pr_warn("VBATT EMPTY SOC = 0\n");
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	mutex_lock(&chip->soc_lock);
+#endif
 	chip->catch_up_soc = 0;
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	mutex_unlock(&chip->soc_lock);
+#endif
 	qg_scale_soc(chip, true);
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	mutex_lock(&chip->data_lock);
+#endif
 
 	qg_sdam_read(SDAM_OCV_UV, &ocv_uv);
 	chip->sdam_data[SDAM_SOC] = 0;
@@ -1406,6 +1563,12 @@ static irqreturn_t qg_vbat_empty_handler(int irq, void *data)
 	chip->sdam_data[SDAM_VALID] = 1;
 
 	qg_store_soc_params(chip);
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	mutex_unlock(&chip->data_lock);
+#endif
 
 	if (chip->qg_psy)
 		power_supply_changed(chip->qg_psy);
@@ -1487,6 +1650,23 @@ static struct qg_irq_info qg_irqs[] = {
 	},
 };
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+static int qg_awake_cb(struct votable *votable, void *data, int awake,
+			const char *client)
+{
+	struct qpnp_qg *chip = data;
+
+	if (awake)
+		__pm_stay_awake(chip->qg_ws);
+	else
+		__pm_relax(chip->qg_ws);
+
+	pr_debug("client: %s awake: %d\n", client, awake);
+	return 0;
+}
+#else
 static int qg_awake_cb(struct votable *votable, void *data, int awake,
 			const char *client)
 {
@@ -1504,6 +1684,7 @@ static int qg_awake_cb(struct votable *votable, void *data, int awake,
 	pr_debug("client: %s awake: %d\n", client, awake);
 	return 0;
 }
+#endif
 
 static int qg_fifo_irq_disable_cb(struct votable *votable, void *data,
 				int disable, const char *client)
@@ -2155,7 +2336,17 @@ static int qg_psy_get_property(struct power_supply *psy,
 		rc = qg_get_battery_capacity(chip, &pval->intval);
 		break;
 	case POWER_SUPPLY_PROP_CAPACITY_RAW:
+#if defined(CONFIG_TCT_PM7250_COMMON)
+		if (chip->battery_missing || !chip->profile_loaded) {
+			pval->intval = BATT_MISSING_SOC * 100;
+		} else if (is_debug_batt_id(chip)) {
+			pval->intval = DEBUG_BATT_SOC * 100;
+		} else {
+			pval->intval = chip->sys_soc;
+		}
+#else
 		pval->intval = chip->sys_soc;
+#endif
 		break;
 	case POWER_SUPPLY_PROP_REAL_CAPACITY:
 		rc = qg_get_battery_capacity_real(chip, &pval->intval);
@@ -2172,6 +2363,18 @@ static int qg_psy_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_TEMP:
 		rc = qg_get_battery_temp(chip, &pval->intval);
 		break;
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	case POWER_SUPPLY_PROP_SUB_BTEMP:
+		if (!is_debug_sub_bid(chip)) {
+			rc = qg_get_sub_btemp(chip, &pval->intval);
+		} else {
+			pval->intval = 250;
+		}
+		break;
+	case POWER_SUPPLY_PROP_SUB_BID:
+		pval->intval = chip->sub_bid_ohm;
+		break;
+#endif
 	case POWER_SUPPLY_PROP_RESISTANCE_ID:
 		pval->intval = chip->batt_id_ohm;
 		break;
@@ -2235,13 +2438,31 @@ static int qg_psy_get_property(struct power_supply *psy,
 		rc = get_cycle_count(chip->counter, &pval->intval);
 		break;
 	case POWER_SUPPLY_PROP_TIME_TO_FULL_AVG:
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+		if (chip->dt.tt_enabled)
+			rc = ttf_get_time_to_full(chip->ttf, &pval->intval);
+		else
+			rc = -ENODATA;
+#else
 		rc = ttf_get_time_to_full(chip->ttf, &pval->intval);
+#endif
 		break;
 	case POWER_SUPPLY_PROP_TIME_TO_FULL_NOW:
 		rc = ttf_get_time_to_full(chip->ttf, &pval->intval);
 		break;
 	case POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG:
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+		if (chip->dt.tt_enabled)
+			rc = ttf_get_time_to_empty(chip->ttf, &pval->intval);
+		else
+			rc = -ENODATA;
+#else
 		rc = ttf_get_time_to_empty(chip->ttf, &pval->intval);
+#endif
 		break;
 	case POWER_SUPPLY_PROP_ESR_ACTUAL:
 		pval->intval = (chip->esr_actual == -EINVAL) ?  -EINVAL :
@@ -2280,8 +2501,20 @@ static int qg_psy_get_property(struct power_supply *psy,
 		break;
 	default:
 		pr_debug("Unsupported property %d\n", psp);
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+		rc = -EINVAL;
+#endif
 		break;
 	}
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	if (rc < 0)
+		rc = -ENODATA;
+#endif
 
 	return rc;
 }
@@ -2343,6 +2576,10 @@ static enum power_supply_property qg_psy_props[] = {
 	POWER_SUPPLY_PROP_SCALE_MODE_EN,
 	POWER_SUPPLY_PROP_BATT_AGE_LEVEL,
 	POWER_SUPPLY_PROP_FG_TYPE,
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	POWER_SUPPLY_PROP_SUB_BID,
+	POWER_SUPPLY_PROP_SUB_BTEMP,
+#endif
 };
 
 static const struct power_supply_desc qg_psy_desc = {
@@ -2710,7 +2947,15 @@ static void qg_status_change_work(struct work_struct *work)
 	if (rc < 0)
 		pr_err("Failed in charge_full_update, rc=%d\n", rc);
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	if (chip->dt.tt_enabled)
+		ttf_update(chip->ttf, input_present);
+#else
 	ttf_update(chip->ttf, input_present);
+#endif
+
 out:
 	pm_relax(chip->dev);
 }
@@ -2724,8 +2969,17 @@ static int qg_notifier_cb(struct notifier_block *nb,
 	if (event != PSY_EVENT_PROP_CHANGED)
 		return NOTIFY_OK;
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	if (work_pending(&chip->qg_status_change_work)) {
+		pr_debug("qg_status_change_work pending now, skip\n");
+		return NOTIFY_OK;
+	}
+#else
 	if (work_pending(&chip->qg_status_change_work))
 		return NOTIFY_OK;
+#endif
 
 	if ((strcmp(psy->desc->name, "battery") == 0)
 		|| (strcmp(psy->desc->name, "parallel") == 0)
@@ -2737,7 +2991,14 @@ static int qg_notifier_cb(struct notifier_block *nb,
 		 * a mutex lock and this is executed in an atomic context.
 		 */
 		pm_stay_awake(chip->dev);
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+		queue_work(private_chg_wq, &chip->qg_status_change_work);
+#else
 		schedule_work(&chip->qg_status_change_work);
+#endif
 	}
 
 	return NOTIFY_OK;
@@ -2801,6 +3062,19 @@ static ssize_t qg_device_read(struct file *file, char __user *buf, size_t count,
 		goto fail_read;
 	}
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	if ((chip->sdam_data[SDAM_RBAT_MOHM] != 0) &&
+		(chip->sdam_data[SDAM_RBAT_MOHM] > 170 ||
+		chip->sdam_data[SDAM_RBAT_MOHM] < 80)) {
+		chip->kdata.param[QG_CLEAR_LEARNT_DATA].data = 1;
+		chip->kdata.param[QG_CLEAR_LEARNT_DATA].valid = true;
+		qg_dbg(chip, QG_DEBUG_ESR, 
+			"fg rbatt(%d) abnormal, reset hvdcp_opti data\n", 
+			chip->sdam_data[SDAM_RBAT_MOHM]);
+	}
+#endif
 
 	if (copy_to_user(buf, &chip->kdata, data_size)) {
 		pr_err("Failed in copy_to_user\n");
@@ -2858,8 +3132,18 @@ static ssize_t qg_device_write(struct file *file, const char __user *buf,
 
 	rc = data_size;
 	vote(chip->awake_votable, UDATA_READY_VOTER, true, 0);
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	qg_dbg(chip, QG_DEBUG_DEVICE, "QG write complete size=%d\n", rc);
+	queue_work(private_chg_wq, &chip->udata_work);
+	mutex_unlock(&chip->data_lock);
+	return rc;
+#else
 	schedule_work(&chip->udata_work);
 	qg_dbg(chip, QG_DEBUG_DEVICE, "QG write complete size=%d\n", rc);
+#endif
 fail:
 	mutex_unlock(&chip->data_lock);
 	return rc;
@@ -2983,11 +3267,52 @@ static int get_batt_id_ohm(struct qpnp_qg *chip, u32 *batt_id_ohm)
 
 	*batt_id_ohm = div64_u64(BID_RPULL_OHM * 1000 + denom / 2, denom);
 
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	pr_err("batt_id_mv=%d, denom=%lld, batt_id_ohm=%d\n",
+			batt_id_mv, denom, *batt_id_ohm);
+#else
 	qg_dbg(chip, QG_DEBUG_PROFILE, "batt_id_mv=%d, batt_id_ohm=%d\n",
 					batt_id_mv, *batt_id_ohm);
+#endif
 
 	return 0;
 }
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+static int get_sub_bid_ohm(struct qpnp_qg *chip, u32 *sub_bid_ohm)
+{
+	int rc, sub_bid_mv = 0;
+	int64_t denom;
+
+	if (!chip->sub_bid_chan)
+		return -ENODATA;
+
+	rc = iio_read_channel_processed(chip->sub_bid_chan, &sub_bid_mv);
+	if (rc < 0) {
+		pr_err("Failed to read sub_bid over ADC, rc=%d\n", rc);
+		return rc;
+	}
+
+	sub_bid_mv = div_s64(sub_bid_mv, 1000);
+	if (sub_bid_mv == 0) {
+		pr_err("sub_bid_mv = 0 from ADC\n");
+		return 0;
+	}
+
+	denom = div64_s64(BID_VREF_MV * 1000, sub_bid_mv) - 1000;
+	if (denom <= 0) {
+		pr_err("batt id connector might be open\n");
+		return 0;
+	}
+
+	*sub_bid_ohm = div64_u64(BID_RPULL_OHM * 1000 + denom / 2, denom);
+
+	pr_err("sub_bid_mv=%d, denom=%lld, sub_bid_ohm=%d\n",
+			sub_bid_mv, denom, *sub_bid_ohm);
+
+	return 0;
+}
+#endif
 
 static int qg_load_battery_profile(struct qpnp_qg *chip)
 {
@@ -3141,6 +3466,10 @@ static int qg_setup_battery(struct qpnp_qg *chip)
 {
 	int rc;
 
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	get_sub_bid_ohm(chip, &chip->sub_bid_ohm);
+#endif
+
 	if (!is_battery_present(chip)) {
 		qg_dbg(chip, QG_DEBUG_PROFILE, "Battery Missing!\n");
 		chip->battery_missing = true;
@@ -3189,6 +3518,10 @@ static int qg_determine_pon_soc(struct qpnp_qg *chip)
 	u32 shutdown[SDAM_MAX] = {0}, soc_raw = 0;
 	char ocv_type[20] = "NONE";
 
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	u32 batt_fv = 0;
+#endif
+
 	if (!chip->profile_loaded) {
 		qg_dbg(chip, QG_DEBUG_PON, "No Profile, skipping PON soc\n");
 		return 0;
@@ -3212,6 +3545,13 @@ static int qg_determine_pon_soc(struct qpnp_qg *chip)
 		goto done;
 	}
 
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	rc = qg_get_battery_voltage(chip, &batt_fv);
+	if (rc < 0) {
+		pr_err("Failed to read fv at PON rc=%d\n", rc);
+	}
+#endif
+
 	rc = get_rtc_time(&rtc_sec);
 	if (rc < 0) {
 		pr_err("Failed to read RTC time rc=%d\n", rc);
@@ -3223,6 +3563,22 @@ static int qg_determine_pon_soc(struct qpnp_qg *chip)
 		pr_err("Failed to read shutdown params rc=%d\n", rc);
 		goto use_pon_ocv;
 	}
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	if (abs((int)shutdown[SDAM_ESR_CHARGE_DELTA]) > 10) {
+		pr_err("found abnormal esr chg delta(0x%x)\n", 
+			shutdown[SDAM_ESR_CHARGE_DELTA]);
+		qg_sdam_write(SDAM_ESR_CHARGE_DELTA, 0);
+	}
+	if (abs((int)shutdown[SDAM_ESR_DISCHARGE_DELTA]) > 10) {
+		pr_err("found abnormal esr dischg delta(0x%x)\n", 
+			shutdown[SDAM_ESR_DISCHARGE_DELTA]);
+		qg_sdam_write(SDAM_ESR_DISCHARGE_DELTA, 0);
+	}
+#endif
+
 	shutdown_temp = sign_extend32(shutdown[SDAM_TEMP], 15);
 
 	rc = lookup_soc_ocv(&pon_soc, ocv[S7_PON_OCV].ocv_uv, batt_temp, false);
@@ -3231,6 +3587,14 @@ static int qg_determine_pon_soc(struct qpnp_qg *chip)
 		goto done;
 	}
 
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	qg_dbg(chip, QG_DEBUG_PON, "%d,%d,%d,%d,%d,%ld,%d,%d,%d\n",
+			shutdown[SDAM_VALID],
+			shutdown[SDAM_SOC],
+			shutdown[SDAM_OCV_UV],
+			shutdown[SDAM_TIME_SEC],
+			shutdown_temp, rtc_sec, batt_temp, pon_soc, batt_fv);
+#else
 	qg_dbg(chip, QG_DEBUG_PON, "Shutdown: Valid=%d SOC=%d OCV=%duV time=%dsecs temp=%d, time_now=%ldsecs temp_now=%d S7_soc=%d\n",
 			shutdown[SDAM_VALID],
 			shutdown[SDAM_SOC],
@@ -3239,12 +3603,50 @@ static int qg_determine_pon_soc(struct qpnp_qg *chip)
 			shutdown_temp,
 			rtc_sec, batt_temp,
 			pon_soc);
+#endif
+
 	/*
 	 * Use the shutdown SOC if
 	 * 1. SDAM read is a success & SDAM data is valid
 	 * 2. The device was powered off for < ignore_shutdown_time
 	 * 2. Batt temp has not changed more than shutdown_temp_diff
 	 */
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	if (!shutdown[SDAM_VALID]) {
+		pr_err("WARNING: sdram data invalid\n");
+		goto use_pon_ocv;
+	}
+
+	if (!is_between(0, chip->dt.ignore_shutdown_soc_secs,
+			abs(rtc_sec - shutdown[SDAM_TIME_SEC]))) {
+		pr_err("WARNING: too long time interval(%ld,%d,%d)\n",
+				rtc_sec, shutdown[SDAM_TIME_SEC],
+				chip->dt.ignore_shutdown_soc_secs);
+		goto use_pon_ocv;
+	}
+
+	if (!is_between(0, chip->dt.shutdown_temp_diff,
+			abs(shutdown_temp -  batt_temp)) &&
+			(shutdown_temp < 0 || batt_temp < 0)) {
+		pr_err("WARNING: too big gaps of temperature(%d,%d,%d)\n",
+				shutdown_temp, batt_temp, 
+				chip->dt.shutdown_temp_diff);
+		goto use_pon_ocv;
+	}
+
+	if ((chip->dt.shutdown_soc_threshold != -EINVAL) &&
+			!is_between(0, chip->dt.shutdown_soc_threshold,
+			abs(pon_soc - shutdown[SDAM_SOC]))) {
+		pr_err("WARNING: too big gaps of soc(%d,%d,%d,%d,%d,%d)\n",
+				pon_soc, shutdown[SDAM_SOC], 
+				chip->dt.shutdown_soc_threshold,
+				ocv[S7_PON_OCV].ocv_uv, batt_fv,
+				shutdown[SDAM_OCV_UV]);
+		goto use_pon_ocv;
+	}
+#else
 	if (!shutdown[SDAM_VALID])
 		goto use_pon_ocv;
 
@@ -3261,13 +3663,17 @@ static int qg_determine_pon_soc(struct qpnp_qg *chip)
 			!is_between(0, chip->dt.shutdown_soc_threshold,
 			abs(pon_soc - shutdown[SDAM_SOC])))
 		goto use_pon_ocv;
+#endif
 
 	use_pon_ocv = false;
 	ocv_uv = shutdown[SDAM_OCV_UV];
 	soc = shutdown[SDAM_SOC];
 	soc_raw = shutdown[SDAM_SOC] * 100;
 	strlcpy(ocv_type, "SHUTDOWN_SOC", 20);
+
+#if !defined(CONFIG_TCT_PM7250_COMMON) && !defined(CONFIG_TCT_IRVINE_CHG_COMMON)
 	qg_dbg(chip, QG_DEBUG_PON, "Using SHUTDOWN_SOC @ PON\n");
+#endif
 
 use_pon_ocv:
 	if (use_pon_ocv == true) {
@@ -3305,6 +3711,11 @@ use_pon_ocv:
 			strlcpy(ocv_type, "S7_PON_SOC", 20);
 			ocv_uv = ocv[S7_PON_OCV].ocv_uv;
 		}
+
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+		if (is_between(QG_MIN_OCV_UV, QG_MAX_OCV_UV, batt_fv))
+			ocv_uv = batt_fv;
+#endif
 
 		ocv_uv = CAP(QG_MIN_OCV_UV, QG_MAX_OCV_UV, ocv_uv);
 		rc = lookup_soc_ocv(&pon_soc, ocv_uv, batt_temp, false);
@@ -3795,8 +4206,10 @@ static int qg_request_interrupt(struct qpnp_qg *chip,
 	if (qg_irqs[irq_index].wake)
 		enable_irq_wake(irq);
 
+#if !defined(CONFIG_TCT_PM7250_COMMON)
 	qg_dbg(chip, QG_DEBUG_PON, "IRQ %s registered wakeable=%d\n",
 			qg_irqs[irq_index].name, qg_irqs[irq_index].wake);
+#endif
 
 	return 0;
 }
@@ -4595,7 +5008,11 @@ static int process_resume(struct qpnp_qg *chip)
 		chip->suspend_data = false;
 	}
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if !defined(CONFIG_TCT_PM7250_COMMON) && !defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
 	schedule_delayed_work(&chip->ttf->ttf_work, 0);
+#endif
 
 	return rc;
 }
@@ -4672,6 +5089,13 @@ static const struct dev_pm_ops qpnp_qg_pm_ops = {
 	.resume		= qpnp_qg_resume,
 };
 
+/* Begin added by hailong.chen for task 9660594 on 2020-08-12 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+#if defined(CONFIG_TCT_DEVICEINFO)
+//extern battery_info_module_name[256];
+#endif
+#endif
+/* End added by hailong.chen for task 9660594 on 2020-08-12 */
 static int qpnp_qg_probe(struct platform_device *pdev)
 {
 	int rc = 0, soc = 0, nom_cap_uah;
@@ -4705,6 +5129,26 @@ static int qpnp_qg_probe(struct platform_device *pdev)
 		chip->batt_therm_chan = NULL;
 		return rc;
 	}
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	chip->sub_bid_chan = iio_channel_get(&pdev->dev, "sub_bid");
+	if (IS_ERR(chip->sub_bid_chan)) {
+		rc = PTR_ERR(chip->sub_bid_chan);
+		if (rc != -EPROBE_DEFER)
+			pr_err("sub-battery id channel unavailable, rc=%d\n", rc);
+		chip->sub_bid_chan = NULL;
+		return rc;
+	}
+
+	chip->sub_btemp_chan = iio_channel_get(&pdev->dev, "sub_btemp");
+	if (IS_ERR(chip->sub_btemp_chan)) {
+		rc = PTR_ERR(chip->sub_btemp_chan);
+		if (rc != -EPROBE_DEFER)
+			pr_err("sub-battery therm channel unavailable, rc=%d\n", rc);
+		chip->sub_btemp_chan = NULL;
+		return rc;
+	}
+#endif
 
 	chip->dev = &pdev->dev;
 	chip->debug_mask = &qg_debug_mask;
@@ -4811,7 +5255,11 @@ static int qpnp_qg_probe(struct platform_device *pdev)
 			pr_err("Error in restoring cycle_count, rc=%d\n", rc);
 			return rc;
 		}
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if !defined(CONFIG_TCT_PM7250_COMMON) && !defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
 		schedule_delayed_work(&chip->ttf->ttf_work, 10000);
+#endif
 	}
 
 	rc = qg_determine_pon_soc(chip);
@@ -4819,6 +5267,14 @@ static int qpnp_qg_probe(struct platform_device *pdev)
 		pr_err("Failed to determine initial state, rc=%d\n", rc);
 		goto fail_device;
 	}
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	chip->qg_ws = wakeup_source_register(&pdev->dev, "qg_voted_ws");
+	if (!chip->qg_ws)
+		goto fail_device;
+#endif
 
 	chip->awake_votable = create_votable("QG_WS", VOTE_SET_ANY,
 					 qg_awake_cb, chip);
@@ -4884,6 +5340,17 @@ static int qpnp_qg_probe(struct platform_device *pdev)
 			(chip->qg_version == QG_LITE) ? "QG_LITE" : "QG_PMIC5",
 			(chip->qg_mode == QG_V_I_MODE) ? "QG_V_I" : "QG_V");
 
+/* Begin added by hailong.chen for task 9660594 on 2020-08-12 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+#if defined(CONFIG_TCT_DEVICEINFO)
+	#if 0
+	snprintf((char *)battery_info_module_name, sizeof(battery_info_module_name),
+				"%s", qg_get_battery_type(chip));
+	#endif
+#endif
+#endif
+/* End added by hailong.chen for task 9660594 on 2020-08-12 */
+
 	return rc;
 
 fail_votable:
@@ -4892,6 +5359,13 @@ fail_device:
 	device_destroy(chip->qg_class, chip->dev_no);
 	cdev_del(&chip->qg_cdev);
 	unregister_chrdev_region(chip->dev_no, 1);
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	wakeup_source_unregister(chip->qg_ws);
+	pr_err("QG probe failed with err:%d\n", rc);
+#endif
 	return rc;
 }
 
@@ -4915,6 +5389,11 @@ static int qpnp_qg_remove(struct platform_device *pdev)
 	mutex_destroy(&chip->soc_lock);
 	if (chip->awake_votable)
 		destroy_votable(chip->awake_votable);
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	wakeup_source_unregister(chip->qg_ws);
+#endif
 
 	return 0;
 }

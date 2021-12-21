@@ -156,6 +156,30 @@ TRACE_EVENT(binder_transaction,
 		  __entry->reply, __entry->flags, __entry->code)
 );
 
+TRACE_EVENT(binder_freeze_transaction,
+	TP_PROTO(int from, int to, const char* descriptor,
+		 int code, bool oneway),
+	TP_ARGS(from, to, descriptor, code, oneway),
+	TP_STRUCT__entry(
+		__field(int, from)
+		__field(int, to)
+		__array(char, descriptor, 100)
+                __field(int, code)
+		__field(bool, oneway)
+	),
+	TP_fast_assign(
+		__entry->from = from;
+		__entry->to = to;
+		memcpy(__entry->descriptor, descriptor, 100);
+                __entry->code = code;
+		__entry->oneway = oneway;
+	),
+	TP_printk("from=%d to=%d descriptor=%s code=%d oneway=%d",
+		  __entry->from, __entry->to,
+		  __entry->descriptor, __entry->code,
+		  __entry->oneway)
+);
+
 TRACE_EVENT(binder_transaction_received,
 	TP_PROTO(struct binder_transaction *t),
 	TP_ARGS(t),

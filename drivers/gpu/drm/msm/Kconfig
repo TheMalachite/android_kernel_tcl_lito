@@ -102,3 +102,16 @@ config DRM_MSM_DSI_10NM_PHY
 	default y
 	help
 	  Choose this option if DSI PHY on SDM845 is used on the platform.
+
+config PXLW_IRIS3
+       bool "Enable pxlw iris3"
+       default n
+
+config PXLW_IRIS6
+       bool "Enable pxlw iris"
+       default n
+
+config PXLW_IRIS6_TWO_MCF
+       bool "Enable pxlw iris two mcf"
+	   depends on PXLW_IRIS6
+       default n

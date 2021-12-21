@@ -636,7 +636,11 @@ source "drivers/misc/echo/Kconfig"
 source "drivers/misc/cxl/Kconfig"
 source "drivers/misc/ocxl/Kconfig"
 source "drivers/misc/cardreader/Kconfig"
+source "drivers/misc/aw8695/Kconfig"
 source "drivers/misc/fpr_FingerprintCard/Kconfig"
+source "drivers/misc/aw8695_ottawa/Kconfig"
+source "drivers/misc/aw8695_chicago/Kconfig"
+source "drivers/misc/tct/Kconfig"
 endmenu
 
 config OKL4_USER_VIPC

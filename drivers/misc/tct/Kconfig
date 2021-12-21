@@ -1,0 +1,5 @@
+config TCT_MISC_DRIVER
+	default n
+	bool "TCT debug: saving kernel log of booting to memory"
+	---help---
+	  file node:/proc/bootmsg

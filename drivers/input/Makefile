@@ -31,3 +31,11 @@ obj-$(CONFIG_INPUT_KEYRESET)	+= keyreset.o
 obj-$(CONFIG_INPUT_KEYCOMBO)	+= keycombo.o
 
 obj-$(CONFIG_RMI4_CORE)		+= rmi4/
+
+# [TCTNB][FINGERPRINT]MODIFIED-BEGIN by TCT.Ji.Chen
+obj-$(CONFIG_INPUT_FINGERPRINT) += fingerprint/
+
+#Begin added by weiqiang.zhou for task 9673443 on 2020-07-06 for poring fp
+obj-$(CONFIG_FINGERPRINT_SUPPORT)	+= fingerprint_HZ/
+#End added by weiqiang.zhou for task 9673443 on 2020-07-06 for poring fp
+

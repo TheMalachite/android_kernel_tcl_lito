@@ -3,6 +3,12 @@
  * Copyright (c) 2013-2020, The Linux Foundation. All rights reserved.
  */
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+#define pr_fmt(fmt) "[USB3_PHY]: %s: " fmt, __func__
+#endif
+
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/err.h>
@@ -922,6 +928,23 @@ static int msm_ssphy_qmp_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct resource *res;
 	int ret = 0, size = 0, len;
+
+#if defined(CONFIG_TCT_PM7250_COMMON)
+	if (dev && dev->of_node && of_property_read_bool(dev->of_node, "extcon")) {
+		struct extcon_dev *edev=NULL;
+		edev = extcon_get_edev_by_phandle(dev, 0);
+		if (IS_ERR(edev)) {
+			if (PTR_ERR(edev) == -EPROBE_DEFER) {
+				pr_err("Could not get extcon, deferring ssusb probe\n");
+				return -EPROBE_DEFER;
+			} else {
+				pr_err("Could not get extcon(%ld), stop ssusb probe\n",
+						PTR_ERR(edev));
+				return PTR_ERR(edev);
+			}
+		}
+	}
+#endif
 
 	phy = devm_kzalloc(dev, sizeof(*phy), GFP_KERNEL);
 	if (!phy)

@@ -82,6 +82,14 @@ enum print_reason {
 #define OVERHEAT_LIMIT_VOTER		"OVERHEAT_LIMIT_VOTER"
 #define TYPEC_SWAP_VOTER		"TYPEC_SWAP_VOTER"
 
+#if defined(CONFIG_TCT_OTTAWA_CHG_PATCH) || defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+#define DCIN_ICL_VOTER		"DCIN_ICL_VOTER"
+#define DCIN_FCC_VOTER      "DCIN_FCC_VOTER"
+#define DCIN_OTG_VOTER      "DCIN_OTG_VOTER"
+#define USBIN_LOCK_VOTER    "USBIN_LOCK_VOTER"
+#define CHG_STATUS_VOTER	"CHG_STATUS_VOTER"
+#endif
+
 #define BOOST_BACK_STORM_COUNT	3
 #define WEAK_CHG_STORM_COUNT	8
 
@@ -94,7 +102,13 @@ enum print_reason {
 #define SDP_100_MA			100000
 #define SDP_CURRENT_UA			500000
 #define CDP_CURRENT_UA			1500000
+
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+#define DCP_CURRENT_UA			2000000
+#else
 #define DCP_CURRENT_UA			1500000
+#endif
+
 #define HVDCP_CURRENT_UA		3000000
 #define TYPEC_DEFAULT_CURRENT_UA	900000
 #define TYPEC_MEDIUM_CURRENT_UA		1500000
@@ -103,6 +117,12 @@ enum print_reason {
 #define DCIN_ICL_MAX_UA			1500000
 #define DCIN_ICL_STEP_UA		100000
 #define ROLE_REVERSAL_DELAY_MS		500
+
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+#define QC3_ICL_MAX	2000000
+#define QC2_ICL_MAX	1500000
+#define HW_ICL_MAX	2050000
+#endif
 
 enum smb_mode {
 	PARALLEL_MASTER = 0,
@@ -300,6 +320,12 @@ enum icl_override_mode {
 /* EXTCON_USB and EXTCON_USB_HOST are mutually exclusive */
 static const u32 smblib_extcon_exclusive[] = {0x3, 0};
 
+/* Begin added by hailong.chen for task 9656602 on 2020-09-09 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+extern int thermal_disable;
+#endif
+/* End added by hailong.chen for task 9656602 on 2020-09-09 */
+
 struct smb_regulator {
 	struct regulator_dev	*rdev;
 	struct regulator_desc	rdesc;
@@ -370,6 +396,21 @@ struct smb_iio {
 	struct iio_channel	*die_temp_chan;
 	struct iio_channel	*skin_temp_chan;
 	struct iio_channel	*smb_temp_chan;
+/* Begin added by hailong.chen for task 9656602 on 2020-09-09 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	struct iio_channel	*v_i_int_ext_chan;
+#endif
+/* End added by hailong.chen for task 9656602 on 2020-09-09 */
+
+#if defined(CONFIG_TCT_OTTAWA_CHG_PATCH) || defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	struct iio_channel	*quiet_temp_chan;
+#endif
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	struct iio_channel	*wpc_temp_chan;
+	struct iio_channel	*sub_batt_i_chan;
+	struct iio_channel	*main_batt_v_chan;
+#endif
 };
 
 struct smb_charger {
@@ -398,6 +439,13 @@ struct smb_charger {
 	struct mutex		dpdm_lock;
 	struct mutex		typec_lock;
 
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	bool				apsd_rerun_done;
+	bool				disable_suspend_on_collapse;
+#endif
+
 	/* power supplies */
 	struct power_supply		*batt_psy;
 	struct power_supply		*usb_psy;
@@ -411,6 +459,16 @@ struct smb_charger {
 
 	/* notifiers */
 	struct notifier_block	nb;
+/* Begin added by hailong.chen for task 9656602 on 2020-09-09 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	struct notifier_block	fb_nb;
+#if defined(CONFIG_DRM)
+#if defined(CONFIG_DRM_PANEL)
+	struct drm_panel *active_panel;
+#endif
+#endif
+#endif
+/* End added by hailong.chen for task 9656602 on 2020-09-09 */
 
 	/* parallel charging */
 	struct parallel_params	pl;
@@ -435,6 +493,9 @@ struct smb_charger {
 	struct votable		*fcc_votable;
 	struct votable		*fcc_main_votable;
 	struct votable		*fv_votable;
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	struct votable		*fv2_votable;
+#endif
 	struct votable		*usb_icl_votable;
 	struct votable		*awake_votable;
 	struct votable		*pl_disable_votable;
@@ -455,7 +516,9 @@ struct smb_charger {
 	struct work_struct	jeita_update_work;
 	struct work_struct	moisture_protection_work;
 	struct work_struct	chg_termination_work;
+#if !defined(CONFIG_TCT_OTTAWA_CHG_PATCH) && !defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
 	struct work_struct	dcin_aicl_work;
+#endif
 	struct work_struct	cp_status_change_work;
 	struct delayed_work	ps_change_timeout_work;
 	struct delayed_work	clear_hdc_work;
@@ -470,6 +533,10 @@ struct smb_charger {
 	struct delayed_work	pr_swap_detach_work;
 	struct delayed_work	pr_lock_clear_work;
 	struct delayed_work	role_reversal_check;
+
+#if defined(CONFIG_TCT_OTTAWA_CHG_PATCH) || defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	struct delayed_work	chg_status_notif_work;
+#endif
 
 	struct alarm		lpd_recheck_timer;
 	struct alarm		moisture_protection_alarm;
@@ -505,9 +572,21 @@ struct smb_charger {
 	int			system_temp_level;
 	int			thermal_levels;
 	int			*thermal_mitigation;
+/* MODIFIED-BEGIN by jin.wang, 2020-04-07,BUG-9172506*/
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	int			*thermal_mitigation_lcdon;
+#endif
+/* MODIFIED-END by jin.wang,BUG-9172506*/
 	int			dcp_icl_ua;
 	int			fake_capacity;
 	int			fake_batt_status;
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+	int			real_soc;
+#endif
 	bool			step_chg_enabled;
 	bool			sw_jeita_enabled;
 	bool			jeita_arb_enable;
@@ -549,6 +628,9 @@ struct smb_charger {
 	int			skin_temp;
 	int			connector_temp;
 	int			thermal_status;
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	int			wpc_temp;
+#endif
 	int			main_fcc_max;
 	u32			jeita_soft_thlds[2];
 	u32			jeita_soft_hys_thlds[2];
@@ -576,6 +658,10 @@ struct smb_charger {
 	int			init_thermal_ua;
 	u32			comp_clamp_level;
 	int			wls_icl_ua;
+#if defined(CONFIG_TCT_OTTAWA_CHG_PATCH) || defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+	struct votable		*dcin_icl_votable;
+	bool		dcin_online;
+#endif
 	int			cutoff_count;
 	bool			dcin_aicl_done;
 	bool			hvdcp3_standalone_config;
@@ -616,6 +702,19 @@ struct smb_charger {
 	int			dcin_uv_count;
 	ktime_t			dcin_uv_last_time;
 	int			last_wls_vout;
+/* Begin added by hailong.chen for task 9656602 on 2020-09-09 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	bool		is_screen_on;
+#endif
+/* End added by hailong.chen for task 9656602 on 2020-09-09 */
+/* Begin added by hailong.chen for defect 9983609 on 2020-10-27 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	struct thermal_cooling_device *tcdev;
+	unsigned long curr_thermal_state;
+	unsigned long max_thermal_state;
+
+#endif
+/* End added by hailong.chen for defect 9983609 on 2020-10-27 */
 };
 
 int smblib_read(struct smb_charger *chg, u16 addr, u8 *val);
@@ -665,7 +764,9 @@ irqreturn_t usb_source_change_irq_handler(int irq, void *data);
 irqreturn_t icl_change_irq_handler(int irq, void *data);
 irqreturn_t typec_state_change_irq_handler(int irq, void *data);
 irqreturn_t typec_attach_detach_irq_handler(int irq, void *data);
+#if !defined(CONFIG_TCT_OTTAWA_CHG_PATCH) && !defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
 irqreturn_t dcin_uv_irq_handler(int irq, void *data);
+#endif
 irqreturn_t dc_plugin_irq_handler(int irq, void *data);
 irqreturn_t high_duty_cycle_irq_handler(int irq, void *data);
 irqreturn_t switcher_power_ok_irq_handler(int irq, void *data);
@@ -675,6 +776,13 @@ irqreturn_t typec_or_rid_detection_change_irq_handler(int irq, void *data);
 irqreturn_t temp_change_irq_handler(int irq, void *data);
 irqreturn_t usbin_ov_irq_handler(int irq, void *data);
 irqreturn_t sdam_sts_change_irq_handler(int irq, void *data);
+
+/* Begin modified by hailong.chen for task 9551005 on 2020-08-05 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+/* End modified by hailong.chen for task 9551005 on 2020-08-05 */
+int recheck_unknown_typec(struct smb_charger *chg);
+#endif
+
 int smblib_get_prop_input_suspend(struct smb_charger *chg,
 				union power_supply_propval *val);
 int smblib_get_prop_batt_present(struct smb_charger *chg,
@@ -710,6 +818,20 @@ int smblib_set_prop_system_temp_level(struct smb_charger *chg,
 int smblib_set_prop_input_current_limited(struct smb_charger *chg,
 				const union power_supply_propval *val);
 
+#if defined(CONFIG_TCT_OTTAWA_CHG_PATCH) || defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+int smblib_get_prop_dc_status(struct smb_charger *chg,
+				union power_supply_propval *val);
+int smblib_get_prop_quiet_temp(struct smb_charger *chg,
+					union power_supply_propval *val);
+#endif
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+int __maybe_unused smblib_get_prop_wpc_temp(struct smb_charger *chg,
+				union power_supply_propval *val);
+int __maybe_unused smblib_get_prop_sub_bid(struct smb_charger *chg,
+				union power_supply_propval *val);
+int __maybe_unused smblib_get_prop_sub_btemp(struct smb_charger *chg,
+				union power_supply_propval *val);
+#endif
 int smblib_get_prop_dc_present(struct smb_charger *chg,
 				union power_supply_propval *val);
 int smblib_get_prop_dc_online(struct smb_charger *chg,
@@ -727,6 +849,24 @@ int smblib_get_prop_voltage_wls_output(struct smb_charger *chg,
 int smblib_set_prop_voltage_wls_output(struct smb_charger *chg,
 				const union power_supply_propval *val);
 int smblib_set_prop_dc_reset(struct smb_charger *chg);
+#if defined(CONFIG_TCT_OTTAWA_CHG_PATCH) || defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+int smblib_get_prop_dc_stub(struct smb_charger *chg,
+				enum power_supply_property psp,
+				union power_supply_propval *val);
+int smblib_set_prop_dc_stub(struct smb_charger *chg,
+				enum power_supply_property psp,
+				const union power_supply_propval *val);
+#endif
+
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+int smblib_get_ina_iio_channel(struct smb_charger *chg,
+				const char *propname, struct iio_channel **chan);
+int smblib_get_prop_sub_battery_current(struct smb_charger *chg,
+				union power_supply_propval *val);
+int smblib_get_prop_main_battery_voltage(struct smb_charger *chg,
+				union power_supply_propval *val);
+#endif
+
 int smblib_get_prop_usb_present(struct smb_charger *chg,
 				union power_supply_propval *val);
 int smblib_get_prop_usb_online(struct smb_charger *chg,

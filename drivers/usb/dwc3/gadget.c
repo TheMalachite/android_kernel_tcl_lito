@@ -2508,11 +2508,17 @@ static void dwc3_gadget_enable_irq(struct dwc3 *dwc)
 	 * Enable SUSPENDEVENT(BIT:6) for version 230A and above
 	 * else enable USB Link change event (BIT:3) for older version
 	 */
+/* Modify-start by baiwei.peng for usb reconnection issue when switch usb mode on 2021/07/21 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	if (dwc->revision < DWC3_REVISION_230A)
+		reg |= DWC3_DEVTEN_ULSTCNGEN;
+#else
 	if (dwc->revision < DWC3_REVISION_230A)
 		reg |= DWC3_DEVTEN_ULSTCNGEN;
 	else
 		reg |= DWC3_DEVTEN_EOPFEN;
-
+#endif
+/* Modify-end by baiwei.peng for usb reconnection issue when switch usb mode on 2021/07/21 */
 	dwc3_writel(dwc->regs, DWC3_DEVTEN, reg);
 }
 
@@ -3571,6 +3577,17 @@ static void dwc3_gadget_conndone_interrupt(struct dwc3 *dwc)
 	reg = dwc3_readl(dwc->regs, DWC3_DSTS);
 	speed = reg & DWC3_DSTS_CONNECTSPD;
 	dwc->speed = speed;
+
+/* Modify-start by baiwei.peng for usb reconnection issue when switch usb mode on 2021/07/21 */
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+	/* Enable SUSPENDEVENT(BIT:6) for version 230A and above */
+	if (dwc->revision >= DWC3_REVISION_230A) {
+		reg = dwc3_readl(dwc->regs, DWC3_DEVTEN);
+		reg |= DWC3_DEVTEN_EOPFEN;
+		dwc3_writel(dwc->regs, DWC3_DEVTEN, reg);
+	}
+#endif
+/* Modify-end by baiwei.peng for usb reconnection issue when switch usb mode on 2021/07/21 */
 
 	/* Reset the retry on erratic error event count */
 	dwc->retries_on_error = 0;

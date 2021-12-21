@@ -716,6 +716,39 @@ err_unlock:
 }
 EXPORT_SYMBOL_GPL(iio_read_channel_processed);
 
+/* Begin added by hailong.chen for task 9656602 on 2020-09-09 */
+#if defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+int iio_read_channel_processed_two(struct iio_channel *chan, int *val1, int *val2)
+{
+	int ret;
+
+	mutex_lock(&chan->indio_dev->info_exist_lock);
+	if (chan->indio_dev->info == NULL) {
+		ret = -ENODEV;
+		goto err_unlock;
+	}
+
+	if (iio_channel_has_info(chan->channel, IIO_CHAN_INFO_PROCESSED)) {
+		ret = iio_channel_read(chan, val1, val2,
+				       IIO_CHAN_INFO_PROCESSED);
+	} else {
+		ret = iio_channel_read(chan, val1, val2, IIO_CHAN_INFO_RAW);
+		if (ret < 0)
+			goto err_unlock;
+		ret = iio_convert_raw_to_processed_unlocked(chan, *val1, val1, 1);
+
+		ret = iio_convert_raw_to_processed_unlocked(chan, *val2, val2, 1);
+	}
+
+err_unlock:
+	mutex_unlock(&chan->indio_dev->info_exist_lock);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(iio_read_channel_processed_two);
+#endif
+/* End added by hailong.chen for task 9656602 on 2020-09-09 */
+
 int iio_read_channel_scale(struct iio_channel *chan, int *val, int *val2)
 {
 	return iio_read_channel_attribute(chan, val, val2, IIO_CHAN_INFO_SCALE);

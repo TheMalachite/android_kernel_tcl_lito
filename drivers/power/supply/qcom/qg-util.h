@@ -29,4 +29,8 @@ int qg_get_vbat_avg(struct qpnp_qg *chip, int *vbat_uv);
 s64 qg_iraw_to_ua(struct qpnp_qg *chip, int iraw);
 int qg_get_ibat_avg(struct qpnp_qg *chip, int *ibat_ua);
 
+#if defined(CONFIG_TCT_CHICAGO_CHG_PATCH)
+int qg_get_sub_btemp(struct qpnp_qg *chip, int *batt_temp);
+#endif
+
 #endif

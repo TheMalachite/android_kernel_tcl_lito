@@ -6,7 +6,11 @@
 #ifndef __STEP_CHG_H__
 #define __STEP_CHG_H__
 
+#if defined(CONFIG_TCT_PM7250_COMMON) || defined(CONFIG_TCT_IRVINE_CHG_COMMON)
+#define MAX_STEP_CHG_ENTRIES	5
+#else
 #define MAX_STEP_CHG_ENTRIES	8
+#endif
 
 struct step_chg_jeita_param {
 	u32			psy_prop;
