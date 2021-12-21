@@ -84,6 +84,7 @@ gen_headers_out_arm = [
     "drm/amdgpu_drm.h",
     "drm/armada_drm.h",
     "drm/drm.h",
+    "drm/msm_drm_iris.h",
     "drm/drm_fourcc.h",
     "drm/drm_mode.h",
     "drm/drm_sarea.h",

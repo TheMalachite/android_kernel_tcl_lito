@@ -981,6 +981,22 @@ ifdef CONFIG_RETPOLINE
 KBUILD_CFLAGS += $(call cc-option,-fcf-protection=none)
 endif
 
+ifeq ($(CONFIG_TCT_GCF),true)
+KBUILD_CFLAGS += -DCONFIG_TCT_GCF
+endif
+
+ifeq ($(CONFIG_TCT_IEEE1725),true)
+KBUILD_CFLAGS += -DCONFIG_TCT_IEEE1725
+endif
+
+ifeq ($(CONFIG_TCT_CB),true)
+KBUILD_CFLAGS += -DCONFIG_TCT_CB
+endif
+
+ifeq ($(DISABLE_TEMPERATURE_DETECTION_AND_THERMAL_POLICY),true)
+KBUILD_CFLAGS += -DDISABLE_TEMPERATURE_DETECTION_AND_THERMAL_POLICY
+endif
+
 # use the deterministic mode of AR if available
 KBUILD_ARFLAGS := $(call ar-option,D)
 
