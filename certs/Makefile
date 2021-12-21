@@ -92,6 +92,12 @@ $(obj)/x509.genkey:
 	@echo >>$@ "keyUsage=digitalSignature"
 	@echo >>$@ "subjectKeyIdentifier=hash"
 	@echo >>$@ "authorityKeyIdentifier=keyid"
+else
+# copy key to $OUT for loadable module signing
+$(obj)/signing_key.pem:
+	@echo "Copy TCT kernel signing key to out"
+	@cp $(MODULE_SIG_KEY_SRCPREFIX)$(CONFIG_MODULE_SIG_KEY) $(@)
+$(obj)/signing_key.x509: $(obj)/signing_key.pem
 endif # CONFIG_MODULE_SIG_KEY
 
 $(eval $(call config_filename,MODULE_SIG_KEY))
